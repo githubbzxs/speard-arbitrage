@@ -171,4 +171,5 @@ export interface SnapshotPayload {
 export type WsStreamMessage =
   | { type: "snapshot"; data: SnapshotPayload | Record<string, unknown> }
   | { type: "event"; data: unknown }
-  | { type: "symbol"; data: unknown };
+  | { type: "symbol"; data: unknown }
+  | { type: "market_top_spreads"; data: unknown };

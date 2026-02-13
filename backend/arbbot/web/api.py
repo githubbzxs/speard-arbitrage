@@ -16,6 +16,9 @@ from ..security import CredentialsValidator
 from ..storage import CredentialsRepository
 from ..strategy.orchestrator import ArbitrageOrchestrator
 
+MARKET_WS_PUSH_INTERVAL_SEC = 3
+WS_HEARTBEAT_TIMEOUT_SEC = 20
+
 
 class ModeRequest(BaseModel):
     mode: str = Field(description="normal_arb 或 zero_wear")
@@ -75,6 +78,9 @@ def create_app(config: AppConfig) -> FastAPI:
     top10_candidates: list[dict[str, Any]] = []
     top10_symbol_map: dict[str, SymbolConfig] = {}
     top10_updated_at = ""
+    market_ws_queues: set[asyncio.Queue[dict[str, Any]]] = set()
+    market_top_push_task: asyncio.Task[None] | None = None
+    market_top_push_stop = asyncio.Event()
 
     def hydrate_runtime_credentials_from_saved() -> None:
         """将已保存凭证同步到运行时配置，供行情扫描等只读场景使用。"""
@@ -119,17 +125,15 @@ def create_app(config: AppConfig) -> FastAPI:
             enabled=True,
         )
 
-    async def refresh_top10_candidates(force_refresh: bool = False) -> None:
+    def parse_float(value: Any) -> float:
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return 0.0
+
+    def apply_top10_payload(payload: dict[str, Any], reconcile_selected: bool) -> None:
         nonlocal selected_symbol, selected_symbol_config, top10_candidates, top10_symbol_map, top10_updated_at
 
-        def parse_float(value: Any) -> float:
-            try:
-                return float(value)
-            except (TypeError, ValueError):
-                return 0.0
-
-        hydrate_runtime_credentials_from_saved()
-        payload = await market_scanner.get_top_spreads(limit=top_limit, force_refresh=force_refresh)
         rows = payload.get("rows")
         rows_list = rows if isinstance(rows, list) else []
 
@@ -159,7 +163,7 @@ def create_app(config: AppConfig) -> FastAPI:
         top10_symbol_map = next_symbol_map
         top10_updated_at = str(payload.get("updated_at") or utc_iso())
 
-        if selected_symbol:
+        if reconcile_selected and selected_symbol:
             next_selected_config = top10_symbol_map.get(selected_symbol)
             if next_selected_config is None:
                 selected_symbol = ""
@@ -168,6 +172,55 @@ def create_app(config: AppConfig) -> FastAPI:
             else:
                 selected_symbol_config = next_selected_config
                 orchestrator.set_selected_symbol(next_selected_config)
+
+    async def refresh_top10_candidates(force_refresh: bool = False, reconcile_selected: bool = True) -> dict[str, Any]:
+        hydrate_runtime_credentials_from_saved()
+        payload = await market_scanner.get_top_spreads(limit=top_limit, force_refresh=force_refresh)
+        apply_top10_payload(payload, reconcile_selected=reconcile_selected)
+        return payload
+
+    def register_market_ws_queue() -> asyncio.Queue[dict[str, Any]]:
+        queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue(maxsize=1)
+        market_ws_queues.add(queue)
+        return queue
+
+    def unregister_market_ws_queue(queue: asyncio.Queue[dict[str, Any]]) -> None:
+        market_ws_queues.discard(queue)
+
+    async def broadcast_market_top_spreads(payload: dict[str, Any]) -> None:
+        if not market_ws_queues:
+            return
+
+        message = {"type": "market_top_spreads", "data": payload}
+        stale_queues: list[asyncio.Queue[dict[str, Any]]] = []
+        for queue in list(market_ws_queues):
+            if queue.full():
+                try:
+                    queue.get_nowait()
+                except asyncio.QueueEmpty:
+                    pass
+            try:
+                queue.put_nowait(message)
+            except Exception:
+                stale_queues.append(queue)
+
+        for queue in stale_queues:
+            market_ws_queues.discard(queue)
+
+    async def market_top_spreads_worker() -> None:
+        while not market_top_push_stop.is_set():
+            try:
+                if market_ws_queues:
+                    payload = await refresh_top10_candidates(force_refresh=True, reconcile_selected=False)
+                    await broadcast_market_top_spreads(payload)
+            except Exception:
+                # 忽略单次推送错误，下一轮继续。
+                pass
+
+            try:
+                await asyncio.wait_for(market_top_push_stop.wait(), timeout=MARKET_WS_PUSH_INTERVAL_SEC)
+            except asyncio.TimeoutError:
+                continue
 
     app = FastAPI(title="跨所价差套利", version="1.0.0")
     app.state.orchestrator = orchestrator
@@ -185,11 +238,24 @@ def create_app(config: AppConfig) -> FastAPI:
 
     @app.on_event("startup")
     async def on_startup() -> None:
+        nonlocal market_top_push_task
+
         if config.web.log_level:
             pass
 
+        market_top_push_stop.clear()
+        market_top_push_task = asyncio.create_task(market_top_spreads_worker(), name="market-top-spreads-worker")
+
     @app.on_event("shutdown")
     async def on_shutdown() -> None:
+        nonlocal market_top_push_task
+
+        market_top_push_stop.set()
+        if market_top_push_task is not None:
+            market_top_push_task.cancel()
+            await asyncio.gather(market_top_push_task, return_exceptions=True)
+            market_top_push_task = None
+
         try:
             await orchestrator.shutdown()
         finally:
@@ -217,14 +283,16 @@ def create_app(config: AppConfig) -> FastAPI:
         force_refresh: bool = False,
     ) -> dict[str, Any]:
         hydrate_runtime_credentials_from_saved()
-        return await market_scanner.get_top_spreads(
+        payload = await market_scanner.get_top_spreads(
             limit=limit,
             force_refresh=force_refresh,
         )
+        apply_top10_payload(payload, reconcile_selected=False)
+        return payload
 
     @app.get("/api/trade/selection")
     async def get_trade_selection(force_refresh: bool = False) -> dict[str, Any]:
-        await refresh_top10_candidates(force_refresh=force_refresh)
+        await refresh_top10_candidates(force_refresh=force_refresh, reconcile_selected=True)
         return {
             "selected_symbol": selected_symbol,
             "top10_candidates": top10_candidates,
@@ -246,7 +314,7 @@ def create_app(config: AppConfig) -> FastAPI:
         if not symbol:
             raise HTTPException(status_code=400, detail="symbol 不能为空")
 
-        await refresh_top10_candidates(force_refresh=payload.force_refresh)
+        await refresh_top10_candidates(force_refresh=payload.force_refresh, reconcile_selected=True)
         symbol_cfg = top10_symbol_map.get(symbol)
         if symbol_cfg is None:
             raise HTTPException(status_code=400, detail="symbol 不在当前 Top10 候选中")
@@ -385,6 +453,7 @@ def create_app(config: AppConfig) -> FastAPI:
     async def ws_stream(ws: WebSocket) -> None:
         await ws.accept()
         queue = orchestrator.register_ws_queue()
+        market_queue = register_market_ws_queue()
         try:
             init_payload = {
                 "type": "snapshot",
@@ -394,16 +463,44 @@ def create_app(config: AppConfig) -> FastAPI:
                 },
             }
             await ws.send_json(init_payload)
+            initial_market_payload = await refresh_top10_candidates(force_refresh=False, reconcile_selected=False)
+            await ws.send_json({"type": "market_top_spreads", "data": initial_market_payload})
 
             while True:
-                try:
-                    message = await asyncio.wait_for(queue.get(), timeout=20)
-                    await ws.send_json(message)
-                except asyncio.TimeoutError:
+                pending_tasks = [asyncio.create_task(queue.get()), asyncio.create_task(market_queue.get())]
+                done, pending = await asyncio.wait(
+                    pending_tasks,
+                    timeout=WS_HEARTBEAT_TIMEOUT_SEC,
+                    return_when=asyncio.FIRST_COMPLETED,
+                )
+
+                if not done:
+                    for task in pending:
+                        task.cancel()
+                    await asyncio.gather(*pending, return_exceptions=True)
                     await ws.send_json({"type": "heartbeat", "data": {"ts": "alive"}})
+                    continue
+
+                message: dict[str, Any] | None = None
+                for task in done:
+                    try:
+                        message = task.result()
+                        break
+                    except Exception:
+                        continue
+
+                for task in pending:
+                    task.cancel()
+                await asyncio.gather(*pending, return_exceptions=True)
+
+                if message is None:
+                    continue
+
+                await ws.send_json(message)
         except WebSocketDisconnect:
             pass
         finally:
             orchestrator.unregister_ws_queue(queue)
+            unregister_market_ws_queue(market_queue)
 
     return app

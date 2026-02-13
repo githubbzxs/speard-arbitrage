@@ -34,7 +34,12 @@ function parseWsMessage(raw: string): WsStreamMessage | null {
     const parsed = JSON.parse(raw) as Record<string, unknown>;
     const messageType = typeof parsed.type === "string" ? parsed.type : "";
 
-    if (messageType === "snapshot" || messageType === "event" || messageType === "symbol") {
+    if (
+      messageType === "snapshot" ||
+      messageType === "event" ||
+      messageType === "symbol" ||
+      messageType === "market_top_spreads"
+    ) {
       return {
         type: messageType,
         data: parsed.data

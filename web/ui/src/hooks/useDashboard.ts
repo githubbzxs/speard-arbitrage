@@ -201,6 +201,10 @@ export function useDashboard() {
         return;
       }
 
+      if (message.type === "market_top_spreads") {
+        return;
+      }
+
       // snapshot 到来时，以聚合数据为准，清空等待刷新队列，避免旧的 symbol 更新覆盖新快照。
       clearPendingSymbolUpdates();
 

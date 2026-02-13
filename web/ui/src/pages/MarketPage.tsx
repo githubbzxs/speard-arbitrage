@@ -1,11 +1,17 @@
 ﻿import { useCallback, useEffect, useMemo, useState } from "react";
 
-import { apiClient, getErrorMessage } from "../api/client";
-import type { MarketTopSpreadRow, MarketTopSpreadsResponse } from "../types";
+import { apiClient, getErrorMessage, normalizeMarketTopSpreads } from "../api/client";
+import type { MarketTopSpreadRow, MarketTopSpreadsResponse, WsConnectionStatus, WsStreamMessage } from "../types";
 import { formatNumber, formatSigned, formatTimestamp } from "../utils/format";
+import { WsStreamClient } from "../ws/client";
 
 const REFRESH_INTERVAL_MS = 20000;
 const TOP_LIMIT = 10;
+const DEFAULT_WS_STATUS: WsConnectionStatus = {
+  state: "connecting",
+  attempt: 0,
+  message: "准备连接实时行情流"
+};
 
 const EMPTY_RESULT: MarketTopSpreadsResponse = {
   updatedAt: "",
@@ -52,11 +58,28 @@ function toNetNominalSpreadPct(row: MarketTopSpreadRow): number {
   return (row.netNominalSpread / row.referenceMid) * 100;
 }
 
+function marketWsHint(status: WsConnectionStatus): string {
+  if (status.state === "connected") {
+    return "WS 实时流已连接";
+  }
+  if (status.state === "reconnecting") {
+    return `WS 重连中（第 ${status.attempt} 次），当前使用轮询兜底`;
+  }
+  if (status.state === "error") {
+    return "WS 异常，当前使用轮询兜底";
+  }
+  if (status.state === "disconnected") {
+    return "WS 已断开，当前使用轮询兜底";
+  }
+  return "WS 连接中...";
+}
+
 export default function MarketPage() {
   const [result, setResult] = useState<MarketTopSpreadsResponse>(EMPTY_RESULT);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
+  const [wsStatus, setWsStatus] = useState<WsConnectionStatus>(DEFAULT_WS_STATUS);
 
   const loadSpreads = useCallback(async (options?: { forceRefresh?: boolean; silent?: boolean }) => {
     const forceRefresh = options?.forceRefresh ?? false;
@@ -88,16 +111,36 @@ export default function MarketPage() {
     }
   }, []);
 
+  const handleWsMessage = useCallback((message: WsStreamMessage) => {
+    if (message.type !== "market_top_spreads") {
+      return;
+    }
+    setResult(normalizeMarketTopSpreads(message.data));
+    setLoading(false);
+    setErrorMessage("");
+  }, []);
+
   useEffect(() => {
-    void loadSpreads();
+    const client = new WsStreamClient({
+      onMessage: handleWsMessage,
+      onStateChange: setWsStatus
+    });
+    client.connect();
+    return () => client.disconnect();
+  }, [handleWsMessage]);
+
+  useEffect(() => {
+    void loadSpreads({ forceRefresh: true });
   }, [loadSpreads]);
 
   useEffect(() => {
     const timer = window.setInterval(() => {
-      void loadSpreads({ silent: true });
+      if (wsStatus.state !== "connected") {
+        void loadSpreads({ forceRefresh: true, silent: true });
+      }
     }, REFRESH_INTERVAL_MS);
     return () => window.clearInterval(timer);
-  }, [loadSpreads]);
+  }, [loadSpreads, wsStatus.state]);
 
   const onForceRefreshClick = () => {
     void loadSpreads({ forceRefresh: true });
@@ -138,6 +181,7 @@ export default function MarketPage() {
         <p className="hint">
           展示口径已统一为百分比：实际价差(%) 使用可执行价差百分比；名义价差(%) 与净名义价差(%) 均按参考中间价换算。
         </p>
+        <p className="hint">{marketWsHint(wsStatus)}</p>
         <p className="hint">
           最近刷新 {formatTimestamp(result.updatedAt)}，扫描周期约 {result.scanIntervalSec} 秒，
           下单配置 {result.configuredSymbols} 个币对，可比 {result.comparableSymbols} 个，可执行 {result.executableSymbols} 个，

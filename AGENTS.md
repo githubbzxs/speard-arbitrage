@@ -152,6 +152,16 @@
   - Impact：`web/ui/src/pages/MarketPage.tsx`。
   - Verify：`cd web/ui && npm run build`，并确认 Top10 表格包含 `名义价差(%)` 与 `净名义价差(%)` 两列。
 
+- [2026-02-13] 行情页新增 Top10 专用 WS 实时流（含轮询兜底）
+  - Why：解决“价差不实时变动”的体验问题，避免仅依赖 HTTP + 缓存周期导致页面长时间不刷新。
+  - Impact：`backend/arbbot/web/api.py`、`backend/tests/test_api_ws_market_top_spreads.py`、`web/ui/src/ws/client.ts`、`web/ui/src/types.ts`、`web/ui/src/pages/MarketPage.tsx`、`web/ui/src/hooks/useDashboard.ts`。
+  - Verify：`python -m pytest backend/tests`、`cd web/ui && npm run build`，并确认 `/ws/stream` 会推送 `market_top_spreads`，行情页在 WS 连接时自动更新。
+
+- [2026-02-13] 下单页改为“选择后手动应用交易标的”，停机态指标统一显示 `--`
+  - Why：修复“看起来已选中但启动按钮灰色”的误导，并避免引擎停止时 0 值被误认为实时信号。
+  - Impact：`web/ui/src/pages/TradePage.tsx`。
+  - Verify：`cd web/ui && npm run build`，确认点击“应用交易标的”后才可启动；引擎未运行时交易对指标显示 `--`。
+
 ## Commands
 - 后端测试：`python -m pytest backend/tests`
 - 后端启动：`python backend/main.py`

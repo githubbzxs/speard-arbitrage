@@ -132,7 +132,7 @@ export default function TradePage() {
     setSelectedSymbol("");
   }, [tradeSelection.selectedSymbol, tradeSelection.top10Candidates]);
 
-  const selectedTradeSymbol = tradeSelection.selectedSymbol || selectedSymbol;
+  const selectedTradeSymbol = tradeSelection.selectedSymbol;
 
   const selectedSymbolInfo = useMemo(
     () => symbols.find((item) => item.symbol === selectedTradeSymbol) ?? null,
@@ -140,9 +140,11 @@ export default function TradePage() {
   );
 
   const selectedCandidate = useMemo(
-    () => tradeSelection.top10Candidates.find((item) => item.symbol === selectedTradeSymbol) ?? null,
-    [selectedTradeSymbol, tradeSelection.top10Candidates]
+    () => tradeSelection.top10Candidates.find((item) => item.symbol === selectedSymbol) ?? null,
+    [selectedSymbol, tradeSelection.top10Candidates]
   );
+
+  const isEngineRunning = status.engineStatus === "running";
 
   const totalRiskCount = useMemo(
     () => status.riskCounts.normal + status.riskCounts.warning + status.riskCounts.critical,
@@ -154,22 +156,26 @@ export default function TradePage() {
     await changeMode(modeDraft);
   };
 
-  const onTradeSymbolChange = async (symbol: string) => {
+  const onTradeSymbolChange = (symbol: string) => {
     setSelectedSymbol(symbol);
     setSelectionMessage("");
     setFormError("");
+  };
 
-    if (!symbol.trim()) {
+  const onApplyTradeSymbol = async () => {
+    if (!selectedSymbol.trim()) {
+      setFormError("请先在 Top10 候选中选择交易标的");
       return;
     }
 
     setSelectionSaving(true);
     try {
-      const result = await apiClient.setTradeSelection(symbol, { forceRefresh: true });
+      const result = await apiClient.setTradeSelection(selectedSymbol, { forceRefresh: true });
       if (!result.ok) {
         throw new Error(result.message || "设置交易标的失败");
       }
-      setSelectionMessage(result.message || `已切换交易标的：${symbol}`);
+      setSelectionMessage(result.message || `已切换交易标的：${selectedSymbol}`);
+      setFormError("");
       await loadTradeSelection(true);
       await refresh();
     } catch (error) {
@@ -183,7 +189,7 @@ export default function TradePage() {
     event.preventDefault();
 
     if (!selectedTradeSymbol.trim()) {
-      setFormError("请先在 Top10 候选中选择交易标的");
+      setFormError("请先在 Top10 候选中选择并应用交易标的");
       return;
     }
 
@@ -226,7 +232,7 @@ export default function TradePage() {
 
   const onFlattenClick = async () => {
     if (!selectedTradeSymbol.trim()) {
-      setFormError("请先在 Top10 候选中选择交易标的");
+      setFormError("请先在 Top10 候选中选择并应用交易标的");
       return;
     }
     setFormError("");
@@ -282,7 +288,7 @@ export default function TradePage() {
             <select
               id="trade-symbol-select"
               value={selectedSymbol}
-              onChange={(event) => void onTradeSymbolChange(event.target.value)}
+              onChange={(event) => onTradeSymbolChange(event.target.value)}
               disabled={isBusy || selectionSaving || selectionLoading}
             >
               {tradeSelection.top10Candidates.length === 0 ? (
@@ -303,12 +309,22 @@ export default function TradePage() {
             >
               {selectionLoading ? "刷新中..." : "刷新 Top10"}
             </button>
+            <button
+              className="btn btn-secondary"
+              type="button"
+              onClick={() => void onApplyTradeSymbol()}
+              disabled={isBusy || selectionSaving || selectionLoading || !selectedSymbol}
+            >
+              {selectionSaving ? "应用中..." : "应用交易标的"}
+            </button>
           </div>
 
           <p className="hint">
-            当前交易标的：{selectedTradeSymbol || "未选择"}，Top10 候选 {tradeSelection.top10Candidates.length} 个，
+            当前已应用交易标的：{selectedTradeSymbol || "未应用"}；当前选择：{selectedSymbol || "未选择"}。Top10 候选{" "}
+            {tradeSelection.top10Candidates.length} 个，
             更新时间 {formatTimestamp(tradeSelection.updatedAt)}。
           </p>
+          {!selectedTradeSymbol ? <p className="hint">请先点击“应用交易标的”，然后才能启动引擎。</p> : null}
           {selectedCandidate ? (
             <p className="hint">候选口径：{formatSigned(selectedCandidate.tradableEdgePct, 4)}%</p>
           ) : null}
@@ -385,8 +401,13 @@ export default function TradePage() {
 
           {selectedSymbolInfo ? (
             <p className="hint">
-              {selectedSymbolInfo.symbol}：Spread {formatSigned(selectedSymbolInfo.spreadBps / 100, 4)}%，
-              zscore {formatNumber(selectedSymbolInfo.zscore, 3)}，仓位 {formatSigned(selectedSymbolInfo.position, 4)}。
+              {selectedSymbolInfo.symbol}：
+              {isEngineRunning
+                ? `Spread ${formatSigned(selectedSymbolInfo.spreadBps / 100, 4)}%，zscore ${formatNumber(
+                    selectedSymbolInfo.zscore,
+                    3
+                  )}，仓位 ${formatSigned(selectedSymbolInfo.position, 4)}。`
+                : "引擎未运行，指标将在启动后实时更新。"}
             </p>
           ) : (
             <p className="hint">当前没有该交易标的的实时数据。</p>
@@ -415,6 +436,7 @@ export default function TradePage() {
           <h2>实时交易对</h2>
           <small>共 {symbols.length} 个交易对</small>
         </div>
+        {!isEngineRunning ? <p className="hint">引擎未运行，以下指标为停机态展示（--）。</p> : null}
         <div className="table-wrap">
           <table>
             <thead>
@@ -439,13 +461,15 @@ export default function TradePage() {
                 symbols.map((item) => (
                   <tr key={item.symbol}>
                     <td>{item.symbol}</td>
-                    <td>{formatSigned(item.spreadBps / 100, 4)}%</td>
-                    <td>{formatNumber(item.zscore, 3)}</td>
-                    <td>{formatSigned(item.position, 4)}</td>
+                    <td>{isEngineRunning ? `${formatSigned(item.spreadBps / 100, 4)}%` : "--"}</td>
+                    <td>{isEngineRunning ? formatNumber(item.zscore, 3) : "--"}</td>
+                    <td>{isEngineRunning ? formatSigned(item.position, 4) : "--"}</td>
                     <td>
-                      <span className={`tag ${signalClass(item.signal)}`}>{item.signal}</span>
+                      <span className={`tag ${signalClass(isEngineRunning ? item.signal : "neutral")}`}>
+                        {isEngineRunning ? item.signal : "--"}
+                      </span>
                     </td>
-                    <td>{item.status}</td>
+                    <td>{isEngineRunning ? item.status : "stopped"}</td>
                     <td>{formatTimestamp(item.updatedAt)}</td>
                   </tr>
                 ))
