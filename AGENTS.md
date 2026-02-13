@@ -72,6 +72,16 @@
   - Impact：`backend/arbbot/config.py`、`.env.example`、`backend/tests/test_runtime_config.py`、`web/ui/src/types.ts`、`web/ui/src/api/client.ts`、`web/ui/src/App.tsx`、`README.md`。
   - Verify：`python -m pytest backend/tests`、`cd web/ui && npm run build`，并检查页面“支持币对信息”表格显示 10 个币对及建议杠杆。
 
+- [2026-02-13] 新增真实行情全市场扫描与 Top10 名义价差接口
+  - Why：满足“支持全部币对并按名义价差排序展示前十”的需求，且价格必须来自两所真实盘口。
+  - Impact：`backend/arbbot/market/scanner.py`、`backend/arbbot/market/__init__.py`、`backend/arbbot/web/api.py`、`backend/tests/test_api_market_top_spreads.py`。
+  - Verify：`python -m pytest backend/tests`，并访问 `GET /api/market/top-spreads` 确认返回 Paradex/GRVT 实际价格与 `nominal_spread`。
+
+- [2026-02-13] 前端改为三页面路由（行情/下单/API配置）
+  - Why：满足页面分离要求，并移除冗余文案与“支持币对信息”区块。
+  - Impact：`web/ui/src/App.tsx`、`web/ui/src/main.tsx`、`web/ui/src/pages/MarketPage.tsx`、`web/ui/src/pages/TradePage.tsx`、`web/ui/src/pages/ApiConfigPage.tsx`、`web/ui/src/api/client.ts`、`web/ui/src/types.ts`、`web/ui/src/styles.css`、`web/ui/package.json`。
+  - Verify：`cd web/ui && npm run build`，并检查 `/market` `/trade` `/api-config` 三个路由页面。
+
 ## Commands
 - 后端测试：`python -m pytest backend/tests`
 - 后端启动：`python backend/main.py`
@@ -85,6 +95,8 @@
   - 已新增 `GET /api/credentials/status`、`POST /api/credentials`、`POST /api/credentials/apply`。
   - `SymbolSnapshot` 增加 `spread_price` 字段，用于前端展示绝对价差。
   - 已新增运行时双开关接口：`POST /api/runtime/order-execution`、`POST /api/runtime/market-data-mode`。
+  - 已新增 `GET /api/market/top-spreads`，默认按全市场名义价差返回 Top10。
+  - 前端已拆分为 `行情页面 / 下单页面 / API配置页面` 三路由，并保留深色主题切换。
 - 下一步建议：
   - 为凭证接口增加鉴权（当前默认无鉴权）。
   - 将 FastAPI `on_event` 迁移到 lifespan，消除弃用警告。
@@ -94,3 +106,7 @@
   - 原因：应用仍使用 `@app.on_event("startup"/"shutdown")`。
   - 修复：后续迁移至 lifespan handlers。
   - 验证：迁移后运行 `python -m pytest backend/tests`，警告应减少。
+- 现象：GRVT 公共市场信息未直接提供 `max_leverage`。
+  - 原因：GRVT 公共市场接口字段不含杠杆上限，账号杠杆查询接口属于私有接口。
+  - 修复：名义价差计算中优先使用交易所字段，缺失时使用前端可调回退杠杆。
+  - 验证：访问 `/api/market/top-spreads`，检查 `*_leverage_source` 字段为 `market/fallback`。

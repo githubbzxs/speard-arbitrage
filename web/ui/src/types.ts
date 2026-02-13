@@ -71,6 +71,43 @@ export interface PublicConfig {
   symbols: SupportedSymbolInfo[];
 }
 
+export interface MarketTopSpreadRow {
+  symbol: string;
+  baseAsset: string;
+  paradexMarket: string;
+  grvtMarket: string;
+  paradexBid: number;
+  paradexAsk: number;
+  paradexMid: number;
+  grvtBid: number;
+  grvtAsk: number;
+  grvtMid: number;
+  spreadPrice: number;
+  spreadAbs: number;
+  spreadBps: number;
+  direction: string;
+  paradexLeverage: number;
+  grvtLeverage: number;
+  effectiveLeverage: number;
+  nominalSpread: number;
+  paradexLeverageSource: "market" | "fallback";
+  grvtLeverageSource: "market" | "fallback";
+  updatedAt: string;
+}
+
+export interface MarketTopSpreadsResponse {
+  updatedAt: string;
+  scanIntervalSec: number;
+  limit: number;
+  totalSymbols: number;
+  fallback: {
+    paradex: number;
+    grvt: number;
+  };
+  lastError: string | null;
+  rows: MarketTopSpreadRow[];
+}
+
 export interface EventLog {
   id: string;
   ts: string;

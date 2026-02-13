@@ -5,6 +5,8 @@ import type {
   EngineStatus,
   EventLevel,
   EventLog,
+  MarketTopSpreadRow,
+  MarketTopSpreadsResponse,
   PublicConfig,
   SupportedSymbolInfo,
   SymbolParamsPayload,
@@ -520,6 +522,94 @@ function normalizeSupportedSymbol(data: unknown): SupportedSymbolInfo | null {
   };
 }
 
+function normalizeMarketSpreadRow(data: unknown): MarketTopSpreadRow | null {
+  const record = toRecord(data);
+  if (!record) {
+    return null;
+  }
+
+  const symbol = pickString(record, ["symbol"], "");
+  if (!symbol) {
+    return null;
+  }
+
+  const paradexLeverageSourceRaw = pickString(
+    record,
+    ["paradex_leverage_source", "paradexLeverageSource"],
+    "fallback"
+  );
+  const grvtLeverageSourceRaw = pickString(
+    record,
+    ["grvt_leverage_source", "grvtLeverageSource"],
+    "fallback"
+  );
+
+  return {
+    symbol,
+    baseAsset: pickString(record, ["base_asset", "baseAsset"], symbol.replace("-PERP", "")),
+    paradexMarket: pickString(record, ["paradex_market", "paradexMarket"], ""),
+    grvtMarket: pickString(record, ["grvt_market", "grvtMarket"], ""),
+    paradexBid: pickNumber(record, ["paradex_bid", "paradexBid"], 0),
+    paradexAsk: pickNumber(record, ["paradex_ask", "paradexAsk"], 0),
+    paradexMid: pickNumber(record, ["paradex_mid", "paradexMid"], 0),
+    grvtBid: pickNumber(record, ["grvt_bid", "grvtBid"], 0),
+    grvtAsk: pickNumber(record, ["grvt_ask", "grvtAsk"], 0),
+    grvtMid: pickNumber(record, ["grvt_mid", "grvtMid"], 0),
+    spreadPrice: pickNumber(record, ["spread_price", "spreadPrice"], 0),
+    spreadAbs: pickNumber(record, ["spread_abs", "spreadAbs"], 0),
+    spreadBps: pickNumber(record, ["spread_bps", "spreadBps"], 0),
+    direction: pickString(record, ["direction"], "unknown"),
+    paradexLeverage: pickNumber(record, ["paradex_leverage", "paradexLeverage"], 1),
+    grvtLeverage: pickNumber(record, ["grvt_leverage", "grvtLeverage"], 1),
+    effectiveLeverage: pickNumber(record, ["effective_leverage", "effectiveLeverage"], 1),
+    nominalSpread: pickNumber(record, ["nominal_spread", "nominalSpread"], 0),
+    paradexLeverageSource: paradexLeverageSourceRaw === "market" ? "market" : "fallback",
+    grvtLeverageSource: grvtLeverageSourceRaw === "market" ? "market" : "fallback",
+    updatedAt: pickString(record, ["updated_at", "updatedAt"], "")
+  };
+}
+
+export function normalizeMarketTopSpreads(data: unknown): MarketTopSpreadsResponse {
+  const fallback: MarketTopSpreadsResponse = {
+    updatedAt: "",
+    scanIntervalSec: 300,
+    limit: 10,
+    totalSymbols: 0,
+    fallback: {
+      paradex: 2,
+      grvt: 2
+    },
+    lastError: null,
+    rows: []
+  };
+
+  const record = toRecord(data);
+  if (!record) {
+    return fallback;
+  }
+
+  const rows = extractArray(record.rows)
+    .map((item) => normalizeMarketSpreadRow(item))
+    .filter((item): item is MarketTopSpreadRow => item !== null)
+    .sort((a, b) => b.nominalSpread - a.nominalSpread);
+
+  const fallbackRecord = toRecord(record.fallback);
+  const lastErrorRaw = record.last_error ?? record.lastError;
+
+  return {
+    updatedAt: pickString(record, ["updated_at", "updatedAt"], fallback.updatedAt),
+    scanIntervalSec: pickNumber(record, ["scan_interval_sec", "scanIntervalSec"], fallback.scanIntervalSec),
+    limit: Math.max(1, pickNumber(record, ["limit"], fallback.limit)),
+    totalSymbols: Math.max(0, pickNumber(record, ["total_symbols", "totalSymbols"], rows.length)),
+    fallback: {
+      paradex: fallbackRecord ? pickNumber(fallbackRecord, ["paradex"], fallback.fallback.paradex) : fallback.fallback.paradex,
+      grvt: fallbackRecord ? pickNumber(fallbackRecord, ["grvt"], fallback.fallback.grvt) : fallback.fallback.grvt
+    },
+    lastError: typeof lastErrorRaw === "string" && lastErrorRaw.trim() ? lastErrorRaw : null,
+    rows
+  };
+}
+
 export function normalizePublicConfig(data: unknown): PublicConfig {
   const fallback: PublicConfig = {
     runtime: {
@@ -673,5 +763,28 @@ export const apiClient = {
   async getPublicConfig(): Promise<PublicConfig> {
     const response = await requestJson<unknown>("/api/config");
     return normalizePublicConfig(response);
+  },
+
+  async getMarketTopSpreads(options?: {
+    limit?: number;
+    paradexFallbackLeverage?: number;
+    grvtFallbackLeverage?: number;
+    forceRefresh?: boolean;
+  }): Promise<MarketTopSpreadsResponse> {
+    const params = new URLSearchParams();
+    const limit = options?.limit ?? 10;
+    const paradexFallbackLeverage = options?.paradexFallbackLeverage ?? 2;
+    const grvtFallbackLeverage = options?.grvtFallbackLeverage ?? 2;
+    const forceRefresh = options?.forceRefresh ?? false;
+
+    params.set("limit", String(limit));
+    params.set("paradex_fallback_leverage", String(paradexFallbackLeverage));
+    params.set("grvt_fallback_leverage", String(grvtFallbackLeverage));
+    if (forceRefresh) {
+      params.set("force_refresh", "true");
+    }
+
+    const response = await requestJson<unknown>(`/api/market/top-spreads?${params.toString()}`);
+    return normalizeMarketTopSpreads(response);
   }
 };

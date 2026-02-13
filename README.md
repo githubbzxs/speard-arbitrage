@@ -21,7 +21,7 @@
   - 下单频率令牌桶限流。
   - 净仓偏差再平衡与硬阈值减仓。
 - 存储：SQLite + CSV 双写。
-- WebUI：实时状态、事件日志、参数热更新、一键平仓。
+- WebUI：行情页 / 下单页 / API 配置页分离，支持真实行情 Top10 名义价差看板。
 
 ## 项目结构
 
@@ -58,9 +58,9 @@ pip install -r requirements.txt
 cp .env.example .env
 ```
 
-默认已内置 10 个主流币对（`BTC/ETH/SOL/XRP/DOGE/ADA/LINK/AVAX/DOT/LTC`），
-并在 Web 配置接口中返回每个币对的 `Paradex/GRVT 市场名` 与 `建议杠杆` 信息。
-如需自定义：
+策略交易可继续使用 `ARB_SYMBOLS` 指定的币对清单；
+行情页会独立扫描两所可交易永续合约的交集，并展示名义价差 Top10。
+如需自定义策略交易币对：
 
 - 修改 `ARB_SYMBOLS` / `PARADEX_MARKETS` / `GRVT_MARKETS`
 - 可选设置 `ARB_RECOMMENDED_LEVERAGES`（与币对顺序一一对应）
@@ -234,6 +234,7 @@ EOF
 - `GET /api/status`
 - `GET /api/symbols`
 - `GET /api/events?limit=100`
+- `GET /api/market/top-spreads?limit=10&paradex_fallback_leverage=2&grvt_fallback_leverage=2&force_refresh=false`
 - `POST /api/runtime/order-execution` body: `{ "live_order_enabled": boolean, "confirm_text"?: string }`
 - `POST /api/runtime/market-data-mode` body: `{ "simulated_market_data": boolean }`
 - `POST /api/engine/start`
@@ -257,5 +258,5 @@ python -m compileall backend
   - `ARB_LIVE_ORDER_ENABLED=false` 先禁用下单，观察稳定后再在网页开启
 - `ARB_DRY_RUN` 仍可兼容旧配置，但建议逐步迁移到双开关。
 - 实盘前请确认交易所 API 权限、杠杆、最小下单量与精度。
-- 页面“支持币对信息”中的杠杆为建议值，不是交易所强制上限，最终以交易所实际规则为准。
+- 名义价差使用 `|实际价差| × min(两所杠杆)` 计算，GRVT 若无公开杠杆字段则使用页面回退杠杆。
 - 风控参数请按交易对波动分层配置，不要直接套默认值。

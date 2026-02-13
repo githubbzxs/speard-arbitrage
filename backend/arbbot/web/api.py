@@ -10,6 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
 from ..config import AppConfig
+from ..market import NominalSpreadScanner
 from ..storage import CredentialsRepository
 from ..strategy.orchestrator import ArbitrageOrchestrator
 
@@ -55,10 +56,12 @@ def create_app(config: AppConfig) -> FastAPI:
     """创建 API 应用。"""
     orchestrator = ArbitrageOrchestrator(config)
     credentials_repository = CredentialsRepository(config.storage.sqlite_path)
+    market_scanner = NominalSpreadScanner(config=config)
 
     app = FastAPI(title="跨所价差套利", version="1.0.0")
     app.state.orchestrator = orchestrator
     app.state.credentials_repository = credentials_repository
+    app.state.market_scanner = market_scanner
 
     app.add_middleware(
         CORSMiddleware,
@@ -95,6 +98,20 @@ def create_app(config: AppConfig) -> FastAPI:
     @app.get("/api/config")
     async def get_config() -> dict[str, Any]:
         return config.to_public_dict()
+
+    @app.get("/api/market/top-spreads")
+    async def get_market_top_spreads(
+        limit: int = 10,
+        paradex_fallback_leverage: float = 2.0,
+        grvt_fallback_leverage: float = 2.0,
+        force_refresh: bool = False,
+    ) -> dict[str, Any]:
+        return await market_scanner.get_top_spreads(
+            limit=limit,
+            paradex_fallback_leverage=paradex_fallback_leverage,
+            grvt_fallback_leverage=grvt_fallback_leverage,
+            force_refresh=force_refresh,
+        )
 
     @app.post("/api/runtime/order-execution", response_model=ActionResponse)
     async def set_order_execution(payload: RuntimeOrderExecutionRequest) -> ActionResponse:
