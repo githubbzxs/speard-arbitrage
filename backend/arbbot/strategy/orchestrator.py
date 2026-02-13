@@ -234,9 +234,12 @@ class ArbitrageOrchestrator:
                     )
                     metrics = SpreadMetrics(
                         symbol=symbol,
+                        edge_para_to_grvt_price=Decimal("0"),
+                        edge_grvt_to_para_price=Decimal("0"),
                         edge_para_to_grvt_bps=Decimal("0"),
                         edge_grvt_to_para_bps=Decimal("0"),
                         signed_edge_bps=Decimal("0"),
+                        signed_edge_price=Decimal("0"),
                         ma=Decimal("0"),
                         std=Decimal("0"),
                         zscore=Decimal("0"),
@@ -297,6 +300,7 @@ class ArbitrageOrchestrator:
                     status=self.engine_status.value,
                     signal=signal.action.value,
                     spread_bps=metrics.signed_edge_bps,
+                    spread_price=metrics.signed_edge_price,
                     zscore=metrics.zscore,
                     net_position=state.net_exposure,
                     target_position=state.target_net,
@@ -433,6 +437,91 @@ class ArbitrageOrchestrator:
         seen = {item["id"] for item in in_memory}
         merged = in_memory + [item for item in from_db if item["id"] not in seen]
         return merged[:limit]
+
+    async def apply_credentials(self, credentials: dict[str, dict[str, str]]) -> dict[str, Any]:
+        """将网页保存的凭证应用到运行时配置（仅允许在引擎停止时执行）。"""
+
+        def apply_fields(exchange: str, fields: tuple[str, ...]) -> list[str]:
+            payload = credentials.get(exchange)
+            if not isinstance(payload, dict):
+                return []
+
+            applied: list[str] = []
+            target = (
+                self.config.paradex.credentials
+                if exchange == "paradex"
+                else self.config.grvt.credentials
+            )
+
+            for field in fields:
+                raw_value = payload.get(field)
+                if not isinstance(raw_value, str):
+                    continue
+                value = raw_value.strip()
+                if not value:
+                    continue
+                setattr(target, field, value)
+                applied.append(field)
+
+            return applied
+
+        async with self._status_lock:
+            if self.engine_status != EngineStatus.STOPPED:
+                return {
+                    "ok": False,
+                    "message": "引擎运行中，请先停止引擎再应用凭证",
+                    "data": {"engine_status": self.engine_status.value},
+                }
+
+            applied_fields = {
+                "paradex": apply_fields("paradex", ("api_key", "api_secret", "passphrase")),
+                "grvt": apply_fields("grvt", ("private_key", "trading_account_id", "api_key", "api_secret")),
+            }
+
+            if not applied_fields["paradex"] and not applied_fields["grvt"]:
+                return {
+                    "ok": False,
+                    "message": "没有可应用的凭证，请先保存凭证",
+                    "data": {"applied_fields": applied_fields},
+                }
+
+            missing_fields: list[str] = []
+            if not self.config.runtime.dry_run:
+                if not self.config.paradex.credentials.api_key.strip():
+                    missing_fields.append("paradex.api_key")
+                if not self.config.paradex.credentials.api_secret.strip():
+                    missing_fields.append("paradex.api_secret")
+                if not self.config.grvt.credentials.private_key.strip():
+                    missing_fields.append("grvt.private_key")
+                if not self.config.grvt.credentials.trading_account_id.strip():
+                    missing_fields.append("grvt.trading_account_id")
+
+            if missing_fields:
+                message = f"凭证已应用，但仍缺少必填字段：{', '.join(missing_fields)}"
+                await self._emit_event(
+                    EventLevel.WARN,
+                    "config",
+                    message,
+                    data={"applied_fields": applied_fields, "missing_fields": missing_fields},
+                )
+                return {
+                    "ok": False,
+                    "message": message,
+                    "data": {"applied_fields": applied_fields, "missing_fields": missing_fields},
+                }
+
+            message = "凭证已应用到运行时配置（引擎已停止），现在可以启动引擎"
+            await self._emit_event(
+                EventLevel.INFO,
+                "config",
+                message,
+                data={"applied_fields": applied_fields},
+            )
+            return {
+                "ok": True,
+                "message": message,
+                "data": {"applied_fields": applied_fields},
+            }
 
     async def set_mode(self, mode: str) -> None:
         if mode == "zero_wear":

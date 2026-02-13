@@ -98,9 +98,12 @@ class SpreadMetrics:
     """价差与统计指标。"""
 
     symbol: str
+    edge_para_to_grvt_price: Decimal
+    edge_grvt_to_para_price: Decimal
     edge_para_to_grvt_bps: Decimal
     edge_grvt_to_para_bps: Decimal
     signed_edge_bps: Decimal
+    signed_edge_price: Decimal
     ma: Decimal
     std: Decimal
     zscore: Decimal
@@ -258,6 +261,7 @@ class SymbolSnapshot:
     status: str
     signal: str
     spread_bps: Decimal
+    spread_price: Decimal
     zscore: Decimal
     net_position: Decimal
     target_position: Decimal
@@ -272,6 +276,7 @@ class SymbolSnapshot:
             "status": self.status,
             "signal": self.signal,
             "spread_bps": float(self.spread_bps),
+            "spread_price": float(self.spread_price),
             "zscore": float(self.zscore),
             "net_position": float(self.net_position),
             "target_position": float(self.target_position),

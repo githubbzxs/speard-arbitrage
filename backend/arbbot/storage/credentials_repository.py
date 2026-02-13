@@ -102,6 +102,27 @@ class CredentialsRepository:
 
         return status
 
+    def get_effective_credentials(self) -> dict[str, dict[str, str]]:
+        """返回可应用到运行时的明文凭证字典。"""
+        credentials: dict[str, dict[str, str]] = {
+            exchange: {field: "" for field in fields}
+            for exchange, fields in self._ALLOWED_FIELDS.items()
+        }
+
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT exchange, field, value FROM credentials"
+            ).fetchall()
+
+        for exchange, field, value in rows:
+            if exchange not in credentials:
+                continue
+            if field not in credentials[exchange]:
+                continue
+            credentials[exchange][field] = str(value or "")
+
+        return credentials
+
     def close(self) -> None:
         """关闭连接。"""
         self._conn.close()

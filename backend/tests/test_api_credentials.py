@@ -60,7 +60,7 @@ def test_post_credentials_api_success(tmp_path: Path) -> None:
     assert response.status_code == 200
     body = response.json()
     assert body["ok"] is True
-    assert body["message"] == "凭证已保存，重启引擎后生效"
+    assert body["message"] == "凭证已保存，可在引擎停止时点击“应用凭证”生效"
 
 
 def test_status_true_after_save(tmp_path: Path) -> None:

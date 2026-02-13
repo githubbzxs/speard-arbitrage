@@ -35,16 +35,21 @@ class SpreadEngine:
 
     def compute_metrics(self, symbol: str, paradex: BBO, grvt: BBO) -> SpreadMetrics:
         """计算双向 edge 与 z-score。"""
-        edge_para_to_grvt = grvt.bid - paradex.ask
-        edge_grvt_to_para = paradex.bid - grvt.ask
+        edge_para_to_grvt_price = grvt.bid - paradex.ask
+        edge_grvt_to_para_price = paradex.bid - grvt.ask
 
         base_mid = (paradex.mid + grvt.mid) / Decimal("2")
-        edge_para_to_grvt_bps = _to_bps(edge_para_to_grvt, base_mid)
-        edge_grvt_to_para_bps = _to_bps(edge_grvt_to_para, base_mid)
+        edge_para_to_grvt_bps = _to_bps(edge_para_to_grvt_price, base_mid)
+        edge_grvt_to_para_bps = _to_bps(edge_grvt_to_para_price, base_mid)
 
-        signed_edge = edge_para_to_grvt_bps if edge_para_to_grvt_bps >= edge_grvt_to_para_bps else -edge_grvt_to_para_bps
+        if edge_para_to_grvt_bps >= edge_grvt_to_para_bps:
+            signed_edge_bps = edge_para_to_grvt_bps
+            signed_edge_price = edge_para_to_grvt_price
+        else:
+            signed_edge_bps = -edge_grvt_to_para_bps
+            signed_edge_price = -edge_grvt_to_para_price
         history = self._history_for(symbol)
-        history.append(signed_edge)
+        history.append(signed_edge_bps)
 
         samples = list(history)
         if len(samples) >= self.config.min_samples:
@@ -55,15 +60,18 @@ class SpreadEngine:
             std_value = Decimal("0")
 
         if std_value > Decimal("0"):
-            zscore = (signed_edge - ma_value) / std_value
+            zscore = (signed_edge_bps - ma_value) / std_value
         else:
             zscore = Decimal("0")
 
         return SpreadMetrics(
             symbol=symbol,
+            edge_para_to_grvt_price=edge_para_to_grvt_price,
+            edge_grvt_to_para_price=edge_grvt_to_para_price,
             edge_para_to_grvt_bps=edge_para_to_grvt_bps,
             edge_grvt_to_para_bps=edge_grvt_to_para_bps,
-            signed_edge_bps=signed_edge,
+            signed_edge_bps=signed_edge_bps,
+            signed_edge_price=signed_edge_price,
             ma=ma_value,
             std=std_value,
             zscore=zscore,

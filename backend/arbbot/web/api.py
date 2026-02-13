@@ -100,8 +100,17 @@ def create_app(config: AppConfig) -> FastAPI:
         credentials_repository.save_credentials(payload.model_dump(exclude_none=True))
         return ActionResponse(
             ok=True,
-            message="凭证已保存，重启引擎后生效",
+            message="凭证已保存，可在引擎停止时点击“应用凭证”生效",
             data=credentials_repository.get_status(),
+        )
+
+    @app.post("/api/credentials/apply", response_model=ActionResponse)
+    async def apply_credentials() -> ActionResponse:
+        result = await orchestrator.apply_credentials(credentials_repository.get_effective_credentials())
+        return ActionResponse(
+            ok=bool(result.get("ok", False)),
+            message=str(result.get("message", "")),
+            data=result.get("data"),
         )
 
     @app.post("/api/engine/start", response_model=ActionResponse)
