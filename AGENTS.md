@@ -22,6 +22,11 @@
   - Impact：`backend/arbbot/models.py`、`backend/arbbot/strategy/spread_engine.py`、`backend/arbbot/strategy/orchestrator.py`、`web/ui/src/App.tsx`、`web/ui/src/types.ts`。
   - Verify：页面表格展示 `Spread(bps)` 与 `Spread(price)` 两列，并显示 `DRY-RUN/LIVE`。
 
+- [2026-02-13] 优化 dry-run 模拟行情锚定价格，并对 WebSocket symbol 更新做节流
+  - Why：避免 dry-run 的随机游走长期漂移，导致价差“像疯狗一样乱跳”，并降低前端频繁重绘。
+  - Impact：`backend/arbbot/exchanges/paradex_adapter.py`、`backend/arbbot/exchanges/grvt_adapter.py`、`web/ui/src/hooks/useDashboard.ts`。
+  - Verify：dry-run 启动引擎后，`Spread(price)` 通常保持在合理区间（不会轻易出现 100+），页面刷新更平滑。
+
 - [2026-02-13] 前端默认深色主题并支持手动切换
   - Why：满足界面深色模式诉求，同时保留可切换性。
   - Impact：`web/ui/src/styles.css`、`web/ui/src/App.tsx`。
