@@ -1,8 +1,8 @@
 ﻿import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { apiClient, getErrorMessage } from "../api/client";
-import type { MarketTopSpreadsResponse } from "../types";
-import { formatNumber, formatPrice, formatSigned, formatTimestamp } from "../utils/format";
+import type { MarketTopSpreadRow, MarketTopSpreadsResponse } from "../types";
+import { formatNumber, formatSigned, formatTimestamp } from "../utils/format";
 
 const REFRESH_INTERVAL_MS = 20000;
 const TOP_LIMIT = 10;
@@ -38,14 +38,11 @@ function formatSkippedReasons(skippedReasons: Record<string, number>): string {
     .join("，");
 }
 
-function directionLabel(direction: string): string {
-  if (direction === "sell_paradex_taker_buy_grvt_taker" || direction === "sell_paradex_taker_buy_grvt_maker") {
-    return "卖 Paradex / 买 GRVT";
+function toNominalSpreadPct(row: MarketTopSpreadRow): number {
+  if (!Number.isFinite(row.referenceMid) || row.referenceMid <= 0) {
+    return 0;
   }
-  if (direction === "buy_paradex_taker_sell_grvt_taker" || direction === "buy_paradex_taker_sell_grvt_maker") {
-    return "买 Paradex / 卖 GRVT";
-  }
-  return direction || "--";
+  return (row.grossNominalSpread / row.referenceMid) * 100;
 }
 
 export default function MarketPage() {
@@ -99,7 +96,10 @@ export default function MarketPage() {
     void loadSpreads({ forceRefresh: true });
   };
 
-  const topRows = result.rows.slice(0, TOP_LIMIT);
+  const topRows = useMemo(
+    () => [...result.rows].sort((a, b) => toNominalSpreadPct(b) - toNominalSpreadPct(a)).slice(0, TOP_LIMIT),
+    [result.rows]
+  );
 
   const summaryText = useMemo(() => {
     if (loading) {
@@ -129,9 +129,7 @@ export default function MarketPage() {
         </div>
 
         <p className="hint">
-          计算口径：实际价差 = max(Paradex 买一 - GRVT 买一, GRVT 卖一 - Paradex 卖一)；
-          名义价差 = 实际价差 × min(Paradex 最大杠杆, GRVT 最大杠杆)；
-          百分比口径 = 价差 / 参考中间价。
+          展示口径已统一为百分比：实际价差(%) 使用可执行价差百分比；名义价差(%) = 名义价差绝对值 / 参考中间价 × 100。
         </p>
         <p className="hint">
           最近刷新 {formatTimestamp(result.updatedAt)}，扫描周期约 {result.scanIntervalSec} 秒，
@@ -143,7 +141,7 @@ export default function MarketPage() {
       <section className="panel page-panel">
         <div className="panel-title">
           <h2>名义价差 Top10</h2>
-          <small>两所真实买卖价（实时）</small>
+          <small>仅保留核心百分比字段</small>
         </div>
 
         <div className="table-wrap">
@@ -152,22 +150,15 @@ export default function MarketPage() {
               <tr>
                 <th>#</th>
                 <th>币对</th>
-                <th>Paradex 买/卖</th>
-                <th>GRVT 买/卖</th>
-                <th>方向</th>
-                <th>实际价差(Price)</th>
                 <th>实际价差(%)</th>
-                <th>实际价差(bps)</th>
                 <th>有效杠杆</th>
-                <th>名义价差</th>
-                <th>预估费用</th>
-                <th>净名义价差</th>
+                <th>名义价差(%)</th>
               </tr>
             </thead>
             <tbody>
               {topRows.length === 0 ? (
                 <tr>
-                  <td colSpan={12} className="empty-cell">
+                  <td colSpan={5} className="empty-cell">
                     暂无行情数据
                   </td>
                 </tr>
@@ -175,46 +166,15 @@ export default function MarketPage() {
                 topRows.map((row, index) => (
                   <tr key={row.symbol}>
                     <td data-label="排名">{index + 1}</td>
-                    <td data-label="币对">
-                      <div>{row.symbol}</div>
-                      <small className="muted-inline">
-                        {row.paradexMarket} / {row.grvtMarket}
-                      </small>
-                    </td>
-                    <td data-label="Paradex 买/卖">
-                      <div>
-                        {formatPrice(row.paradexBid)} / {formatPrice(row.paradexAsk)}
-                      </div>
-                      <small className="muted-inline">中间价 {formatPrice(row.paradexMid)}</small>
-                    </td>
-                    <td data-label="GRVT 买/卖">
-                      <div>
-                        {formatPrice(row.grvtBid)} / {formatPrice(row.grvtAsk)}
-                      </div>
-                      <small className="muted-inline">中间价 {formatPrice(row.grvtMid)}</small>
-                    </td>
-                    <td data-label="方向">{directionLabel(row.direction)}</td>
-                    <td data-label="实际价差(Price)">
-                      <strong>{formatSigned(row.tradableEdgePrice, 6)}</strong>
-                    </td>
+                    <td data-label="币对">{row.symbol}</td>
                     <td data-label="实际价差(%)">
                       <strong>{formatSigned(row.tradableEdgePct, 4)}%</strong>
                     </td>
-                    <td data-label="实际价差(bps)">
-                      <strong>{formatSigned(row.tradableEdgeBps, 2)} bps</strong>
-                    </td>
                     <td data-label="有效杠杆">
-                      <div>{formatNumber(row.effectiveLeverage, 2)}x</div>
-                      <small className="muted-inline">
-                        P {formatNumber(row.paradexMaxLeverage, 2)}x / G {formatNumber(row.grvtMaxLeverage, 2)}x
-                      </small>
+                      <strong>{formatNumber(row.effectiveLeverage, 2)}x</strong>
                     </td>
-                    <td data-label="名义价差">
-                      <strong>{formatSigned(row.grossNominalSpread, 4)}</strong>
-                    </td>
-                    <td data-label="预估费用">{formatSigned(row.feeCostEstimate, 4)}</td>
-                    <td data-label="净名义价差">
-                      <strong>{formatSigned(row.netNominalSpread, 4)}</strong>
+                    <td data-label="名义价差(%)">
+                      <strong>{formatSigned(toNominalSpreadPct(row), 4)}%</strong>
                     </td>
                   </tr>
                 ))

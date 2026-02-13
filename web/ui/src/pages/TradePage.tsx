@@ -4,7 +4,7 @@ import type { FormEvent } from "react";
 import { apiClient, getErrorMessage } from "../api/client";
 import { useDashboard } from "../hooks/useDashboard";
 import type { SymbolParamsPayload, TradeSelection, TradingMode } from "../types";
-import { formatNumber, formatPrice, formatSigned, formatTimestamp } from "../utils/format";
+import { formatNumber, formatSigned, formatTimestamp } from "../utils/format";
 
 const EMPTY_TRADE_SELECTION: TradeSelection = {
   selectedSymbol: "",
@@ -310,9 +310,7 @@ export default function TradePage() {
             更新时间 {formatTimestamp(tradeSelection.updatedAt)}。
           </p>
           {selectedCandidate ? (
-            <p className="hint">
-              候选口径：{formatSigned(selectedCandidate.tradableEdgePct, 4)}% / {formatSigned(selectedCandidate.tradableEdgeBps, 2)} bps。
-            </p>
+            <p className="hint">候选口径：{formatSigned(selectedCandidate.tradableEdgePct, 4)}%</p>
           ) : null}
         </div>
 
@@ -387,13 +385,11 @@ export default function TradePage() {
 
           {selectedSymbolInfo ? (
             <p className="hint">
-              {selectedSymbolInfo.symbol}：Paradex {formatPrice(selectedSymbolInfo.paradexBid)} / {formatPrice(selectedSymbolInfo.paradexAsk)}，
-              GRVT {formatPrice(selectedSymbolInfo.grvtBid)} / {formatPrice(selectedSymbolInfo.grvtAsk)}，
-              spread {formatSigned(selectedSymbolInfo.spreadPrice, 4)}（{formatSigned(selectedSymbolInfo.spreadBps / 100, 4)}% / {formatSigned(selectedSymbolInfo.spreadBps, 2)} bps），
-              zscore {formatNumber(selectedSymbolInfo.zscore, 3)}。
+              {selectedSymbolInfo.symbol}：Spread {formatSigned(selectedSymbolInfo.spreadBps / 100, 4)}%，
+              zscore {formatNumber(selectedSymbolInfo.zscore, 3)}，仓位 {formatSigned(selectedSymbolInfo.position, 4)}。
             </p>
           ) : (
-            <p className="hint">当前没有该交易标的的实时盘口。</p>
+            <p className="hint">当前没有该交易标的的实时数据。</p>
           )}
 
           {formError ? <p className="form-error">{formError}</p> : null}
@@ -424,13 +420,7 @@ export default function TradePage() {
             <thead>
               <tr>
                 <th>Symbol</th>
-                <th>Paradex Bid</th>
-                <th>Paradex Ask</th>
-                <th>GRVT Bid</th>
-                <th>GRVT Ask</th>
                 <th>Spread (%)</th>
-                <th>Spread (bps)</th>
-                <th>Spread (price)</th>
                 <th>ZScore</th>
                 <th>仓位</th>
                 <th>信号</th>
@@ -441,7 +431,7 @@ export default function TradePage() {
             <tbody>
               {symbols.length === 0 ? (
                 <tr>
-                  <td colSpan={13} className="empty-cell">
+                  <td colSpan={7} className="empty-cell">
                     当前没有交易对数据
                   </td>
                 </tr>
@@ -449,13 +439,7 @@ export default function TradePage() {
                 symbols.map((item) => (
                   <tr key={item.symbol}>
                     <td>{item.symbol}</td>
-                    <td>{formatPrice(item.paradexBid)}</td>
-                    <td>{formatPrice(item.paradexAsk)}</td>
-                    <td>{formatPrice(item.grvtBid)}</td>
-                    <td>{formatPrice(item.grvtAsk)}</td>
-                    <td>{formatSigned(item.spreadBps / 100, 4)}</td>
-                    <td>{formatSigned(item.spreadBps, 2)}</td>
-                    <td>{formatSigned(item.spreadPrice, 4)}</td>
+                    <td>{formatSigned(item.spreadBps / 100, 4)}%</td>
                     <td>{formatNumber(item.zscore, 3)}</td>
                     <td>{formatSigned(item.position, 4)}</td>
                     <td>

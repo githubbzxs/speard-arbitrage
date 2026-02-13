@@ -142,6 +142,11 @@
   - Impact：`backend/arbbot/web/api.py`、`backend/arbbot/strategy/orchestrator.py`、`backend/tests/test_api_trade_selection.py`、`web/ui/src/api/client.ts`、`web/ui/src/types.ts`、`web/ui/src/pages/TradePage.tsx`、`web/ui/src/pages/MarketPage.tsx`。
   - Verify：`python -m pytest backend/tests`、`cd web/ui && npm run build`，并确认未选标的时无法启动引擎、下单页仅可选择 Top10 候选。
 
+- [2026-02-13] 行情与下单展示改为纯百分比极简视图
+  - Why：用户要求去掉方向、两所买卖价、复杂市场映射与 bps，仅保留百分比价差视图。
+  - Impact：`web/ui/src/pages/MarketPage.tsx`、`web/ui/src/pages/TradePage.tsx`。
+  - Verify：`cd web/ui && npm run build`，并确认页面仅显示 `%` 口径，且不再出现方向、买卖价、`bps`、`paradex/grvt market` 文案。
+
 ## Commands
 - 后端测试：`python -m pytest backend/tests`
 - 后端启动：`python backend/main.py`
