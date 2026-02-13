@@ -207,6 +207,11 @@
   - Impact：`backend/arbbot/strategy/performance_tracker.py`、`backend/arbbot/strategy/execution_engine.py`、`backend/arbbot/strategy/orchestrator.py`、`backend/arbbot/exchanges/base.py`、`backend/arbbot/exchanges/paradex_adapter.py`、`backend/arbbot/exchanges/grvt_adapter.py`、`backend/tests/test_performance_tracker.py`、`backend/tests/test_status_metrics.py`、`web/ui/src/types.ts`、`web/ui/src/api/client.ts`、`web/ui/src/pages/TradePage.tsx`。
   - Verify：`python -m pytest backend/tests`、`cd web/ui && npm run build`，并确认 `/api/status` 包含 `performance/balances/positions_summary` 且前端总览卡片显示对应值。
 
+- [2026-02-13] 修复行情/下单页桌面端比例失衡（左右列解耦）
+  - Why：原布局在桌面端会出现左侧大面积空白、表格展示空间不足，观感为“比例不对”。
+  - Impact：`web/ui/src/pages/TradePage.tsx`、`web/ui/src/styles.css`。
+  - Verify：`cd web/ui && npm run build`，并在 `/trade` 验证“左列行情表 + 右列策略控制/仓位明细”比例稳定。
+
 ## Commands
 - 后端测试：`python -m pytest backend/tests`
 - 后端启动：`python backend/main.py`

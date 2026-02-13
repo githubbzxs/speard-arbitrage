@@ -411,290 +411,298 @@ export default function TradePage() {
         </div>
       </section>
 
-      <section className="panel control-panel page-panel">
-        <div className="panel-title">
-          <h2>策略控制</h2>
-          <small>{isBusy || selectionSaving ? "命令执行中..." : "可操作"}</small>
-        </div>
-
-        <div className="form-block">
-          <label htmlFor="trade-symbol-select">交易标的（全量候选）</label>
-          <div className="trade-selection-flow">
-            <div className="trade-step-card">
-              <p className="trade-step-title">步骤 1：选择交易标的</p>
-              <div className="inline-form trade-symbol-select-form">
-                <select
-                  id="trade-symbol-select"
-                  value={selectedSymbol}
-                  onChange={(event) => onTradeSymbolChange(event.target.value)}
-                  disabled={isBusy || selectionSaving || selectionLoading}
-                >
-                  {tradeSelection.candidates.length === 0 ? (
-                    <option value="">暂无候选（先点击刷新候选）</option>
+      <div className="dashboard-grid">
+        <div className="dashboard-main-column">
+          <section className="panel symbol-panel page-panel">
+            <div className="panel-title">
+              <h2>当前行情（单表）</h2>
+              <small>全量可比币对</small>
+            </div>
+            <p className="hint">
+              最近刷新 {formatTimestamp(marketResult.updatedAt)}，扫描周期约 {marketResult.scanIntervalSec} 秒，
+              配置 {marketResult.configuredSymbols} 个，可比 {marketResult.comparableSymbols} 个，可执行{" "}
+              {marketResult.executableSymbols} 个，跳过 {marketResult.skippedCount} 个（
+              {formatSkippedReasons(marketResult.skippedReasons)}）。
+            </p>
+            <div className="table-wrap">
+              <table className="responsive-table">
+                <thead>
+                  <tr>
+                    <th>#</th>
+                    <th>币对</th>
+                    <th>实际价差(%)</th>
+                    <th>Z-score</th>
+                    <th>速度(%/分钟)</th>
+                    <th>波动率(%)</th>
+                    <th>有效杠杆</th>
+                    <th>名义价差(%)</th>
+                    <th>净名义价差(%)</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {topRows.length === 0 ? (
+                    <tr>
+                      <td colSpan={9} className="empty-cell">
+                        暂无行情数据
+                      </td>
+                    </tr>
                   ) : (
-                    tradeSelection.candidates.map((item) => (
-                      <option key={item.symbol} value={item.symbol}>
-                        {item.symbol}
-                      </option>
+                    topRows.map((row, index) => (
+                      <tr key={row.symbol}>
+                        <td data-label="排名">{index + 1}</td>
+                        <td data-label="币对">{row.symbol}</td>
+                        <td data-label="实际价差(%)">
+                          <strong>{formatSigned(row.tradableEdgePct, 4)}%</strong>
+                        </td>
+                        <td data-label="Z-score">
+                          <strong>{formatNumber(row.zscore, 3)}</strong>
+                        </td>
+                        <td data-label="速度(%/分钟)">
+                          <strong>{formatSigned(row.spreadSpeedPctPerMin, 4)}</strong>
+                        </td>
+                        <td data-label="波动率(%)">
+                          <strong>{formatNumber(row.spreadVolatilityPct, 4)}</strong>
+                        </td>
+                        <td data-label="有效杠杆">
+                          <strong>{formatNumber(row.effectiveLeverage, 2)}x</strong>
+                        </td>
+                        <td data-label="名义价差(%)">
+                          <strong>{formatSigned(toNominalSpreadPct(row), 4)}%</strong>
+                        </td>
+                        <td data-label="净名义价差(%)">
+                          <strong>{formatSigned(toNetNominalSpreadPct(row), 4)}%</strong>
+                        </td>
+                      </tr>
                     ))
                   )}
-                </select>
-                <button
-                  className="btn btn-ghost trade-symbol-btn"
-                  type="button"
-                  onClick={() => {
-                    void loadTradeSelection(true);
-                    void loadMarketSpreads({ forceRefresh: true, silent: true });
-                  }}
-                  disabled={isBusy || selectionSaving || selectionLoading}
-                >
-                  {selectionLoading ? "刷新中..." : "刷新候选"}
-                </button>
-              </div>
+                </tbody>
+              </table>
+            </div>
+          </section>
+        </div>
+
+        <div className="dashboard-side-column">
+          <section className="panel control-panel page-panel">
+            <div className="panel-title">
+              <h2>策略控制</h2>
+              <small>{isBusy || selectionSaving ? "命令执行中..." : "可操作"}</small>
             </div>
 
-            <div className="trade-step-card">
-              <p className="trade-step-title">步骤 2：应用到引擎</p>
-              <div className="trade-apply-row">
-                <button
-                  className="btn btn-secondary trade-symbol-btn"
-                  type="button"
-                  onClick={() => void onApplyTradeSymbol()}
-                  disabled={isBusy || selectionSaving || selectionLoading || !selectedSymbol}
-                >
-                  {selectionSaving ? "应用中..." : "应用交易标的"}
-                </button>
-                <p className={`trade-apply-state ${canStartEngine ? "trade-apply-state-ok" : "trade-apply-state-warn"}`}>
-                  {canStartEngine ? "已完成应用，可启动引擎" : "未完成应用，启动引擎会被禁用"}
+            <div className="form-block">
+              <label htmlFor="trade-symbol-select">交易标的（全量候选）</label>
+              <div className="trade-selection-flow">
+                <div className="trade-step-card">
+                  <p className="trade-step-title">步骤 1：选择交易标的</p>
+                  <div className="inline-form trade-symbol-select-form">
+                    <select
+                      id="trade-symbol-select"
+                      value={selectedSymbol}
+                      onChange={(event) => onTradeSymbolChange(event.target.value)}
+                      disabled={isBusy || selectionSaving || selectionLoading}
+                    >
+                      {tradeSelection.candidates.length === 0 ? (
+                        <option value="">暂无候选（先点击刷新候选）</option>
+                      ) : (
+                        tradeSelection.candidates.map((item) => (
+                          <option key={item.symbol} value={item.symbol}>
+                            {item.symbol}
+                          </option>
+                        ))
+                      )}
+                    </select>
+                    <button
+                      className="btn btn-ghost trade-symbol-btn"
+                      type="button"
+                      onClick={() => {
+                        void loadTradeSelection(true);
+                        void loadMarketSpreads({ forceRefresh: true, silent: true });
+                      }}
+                      disabled={isBusy || selectionSaving || selectionLoading}
+                    >
+                      {selectionLoading ? "刷新中..." : "刷新候选"}
+                    </button>
+                  </div>
+                </div>
+
+                <div className="trade-step-card">
+                  <p className="trade-step-title">步骤 2：应用到引擎</p>
+                  <div className="trade-apply-row">
+                    <button
+                      className="btn btn-secondary trade-symbol-btn"
+                      type="button"
+                      onClick={() => void onApplyTradeSymbol()}
+                      disabled={isBusy || selectionSaving || selectionLoading || !selectedSymbol}
+                    >
+                      {selectionSaving ? "应用中..." : "应用交易标的"}
+                    </button>
+                    <p className={`trade-apply-state ${canStartEngine ? "trade-apply-state-ok" : "trade-apply-state-warn"}`}>
+                      {canStartEngine ? "已完成应用，可启动引擎" : "未完成应用，启动引擎会被禁用"}
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              <p className="hint">
+                当前已应用交易标的：{selectedTradeSymbol || "未应用"}；当前选择：{selectedSymbol || "未选择"}。候选{" "}
+                {tradeSelection.candidates.length} 个，
+                更新时间 {formatTimestamp(tradeSelection.updatedAt)}。
+              </p>
+              {!selectedTradeSymbol ? <p className="hint">请先完成“步骤 2 应用到引擎”，然后才能启动引擎。</p> : null}
+              {needsApplySelection ? <p className="hint">你已切换交易标的，但还未应用，当前仍按旧标的运行。</p> : null}
+              {selectedCandidate ? (
+                <p className="hint">
+                  候选口径：{formatSigned(selectedCandidate.tradableEdgePct, 4)}%，Z-score{" "}
+                  {formatSigned(selectedCandidate.zscore, 3)}，速度{" "}
+                  {formatSigned(selectedCandidate.spreadSpeedPctPerMin, 4)}%/分钟，波动率{" "}
+                  {formatNumber(selectedCandidate.spreadVolatilityPct, 4)}%
                 </p>
+              ) : null}
+            </div>
+
+            <div className="action-row action-row-3">
+              <button
+                className="btn btn-primary"
+                onClick={() => void startEngine()}
+                disabled={isBusy || selectionSaving || !canStartEngine}
+              >
+                启动引擎
+              </button>
+              <button className="btn btn-danger" onClick={() => void stopEngine()} disabled={isBusy || selectionSaving}>
+                停止引擎
+              </button>
+              <button
+                className="btn btn-ghost"
+                onClick={() => {
+                  void refresh();
+                  void loadMarketSpreads({ forceRefresh: true, silent: true });
+                }}
+                disabled={isBusy || selectionSaving || loading || marketRefreshing}
+              >
+                {marketRefreshing ? "刷新中..." : "手动刷新"}
+              </button>
+            </div>
+
+            <form className="form-block" onSubmit={onModeSubmit}>
+              <label htmlFor="mode-select">运行模式</label>
+              <div className="inline-form">
+                <select
+                  id="mode-select"
+                  value={modeDraft}
+                  onChange={(event) => setModeDraft(event.target.value as TradingMode)}
+                  disabled={isBusy || selectionSaving}
+                >
+                  <option value="normal_arb">normal_arb</option>
+                  <option value="zero_wear">zero_wear</option>
+                </select>
+                <button className="btn btn-secondary" type="submit" disabled={isBusy || selectionSaving}>
+                  应用模式
+                </button>
               </div>
-            </div>
-          </div>
+            </form>
 
-          <p className="hint">
-            当前已应用交易标的：{selectedTradeSymbol || "未应用"}；当前选择：{selectedSymbol || "未选择"}。候选{" "}
-            {tradeSelection.candidates.length} 个，
-            更新时间 {formatTimestamp(tradeSelection.updatedAt)}。
-          </p>
-          {!selectedTradeSymbol ? <p className="hint">请先完成“步骤 2 应用到引擎”，然后才能启动引擎。</p> : null}
-          {needsApplySelection ? <p className="hint">你已切换交易标的，但还未应用，当前仍按旧标的运行。</p> : null}
-          {selectedCandidate ? (
-            <p className="hint">
-              候选口径：{formatSigned(selectedCandidate.tradableEdgePct, 4)}%，Z-score {formatSigned(selectedCandidate.zscore, 3)}，
-              速度 {formatSigned(selectedCandidate.spreadSpeedPctPerMin, 4)}%/分钟，波动率{" "}
-              {formatNumber(selectedCandidate.spreadVolatilityPct, 4)}%
-            </p>
-          ) : null}
-        </div>
+            <form className="form-block" onSubmit={onParamsSubmit}>
+              <div className="param-grid">
+                <div>
+                  <label htmlFor="z-entry">z_entry</label>
+                  <input
+                    id="z-entry"
+                    value={zEntry}
+                    onChange={(event) => setZEntry(event.target.value)}
+                    placeholder="例如 2.2"
+                  />
+                </div>
+                <div>
+                  <label htmlFor="z-exit">z_exit</label>
+                  <input
+                    id="z-exit"
+                    value={zExit}
+                    onChange={(event) => setZExit(event.target.value)}
+                    placeholder="例如 0.8"
+                  />
+                </div>
+                <div>
+                  <label htmlFor="max-position">max_position</label>
+                  <input
+                    id="max-position"
+                    value={maxPosition}
+                    onChange={(event) => setMaxPosition(event.target.value)}
+                    placeholder="例如 1500"
+                  />
+                </div>
+              </div>
 
-        <div className="action-row action-row-3">
-          <button
-            className="btn btn-primary"
-            onClick={() => void startEngine()}
-            disabled={isBusy || selectionSaving || !canStartEngine}
-          >
-            启动引擎
-          </button>
-          <button className="btn btn-danger" onClick={() => void stopEngine()} disabled={isBusy || selectionSaving}>
-            停止引擎
-          </button>
-          <button
-            className="btn btn-ghost"
-            onClick={() => {
-              void refresh();
-              void loadMarketSpreads({ forceRefresh: true, silent: true });
-            }}
-            disabled={isBusy || selectionSaving || loading || marketRefreshing}
-          >
-            {marketRefreshing ? "刷新中..." : "手动刷新"}
-          </button>
-        </div>
-
-        <form className="form-block" onSubmit={onModeSubmit}>
-          <label htmlFor="mode-select">运行模式</label>
-          <div className="inline-form">
-            <select
-              id="mode-select"
-              value={modeDraft}
-              onChange={(event) => setModeDraft(event.target.value as TradingMode)}
-              disabled={isBusy || selectionSaving}
-            >
-              <option value="normal_arb">normal_arb</option>
-              <option value="zero_wear">zero_wear</option>
-            </select>
-            <button className="btn btn-secondary" type="submit" disabled={isBusy || selectionSaving}>
-              应用模式
-            </button>
-          </div>
-        </form>
-
-        <form className="form-block" onSubmit={onParamsSubmit}>
-          <div className="param-grid">
-            <div>
-              <label htmlFor="z-entry">z_entry</label>
-              <input
-                id="z-entry"
-                value={zEntry}
-                onChange={(event) => setZEntry(event.target.value)}
-                placeholder="例如 2.2"
-              />
-            </div>
-            <div>
-              <label htmlFor="z-exit">z_exit</label>
-              <input
-                id="z-exit"
-                value={zExit}
-                onChange={(event) => setZExit(event.target.value)}
-                placeholder="例如 0.8"
-              />
-            </div>
-            <div>
-              <label htmlFor="max-position">max_position</label>
-              <input
-                id="max-position"
-                value={maxPosition}
-                onChange={(event) => setMaxPosition(event.target.value)}
-                placeholder="例如 1500"
-              />
-            </div>
-          </div>
-
-          {selectedSymbolInfo ? (
-            <p className="hint">
-              {selectedSymbolInfo.symbol}：
-              {isEngineRunning
-                ? `Spread ${formatSigned(selectedSymbolInfo.spreadBps / 100, 4)}%，zscore ${formatNumber(
-                    selectedSymbolInfo.zscore,
-                    3
-                  )}，仓位 ${formatSigned(selectedSymbolInfo.position, 4)}。`
-                : "引擎未运行，指标将在启动后实时更新。"}
-            </p>
-          ) : (
-            <p className="hint">当前没有该交易标的的实时数据。</p>
-          )}
-
-          {formError ? <p className="form-error">{formError}</p> : null}
-
-          <div className="action-row">
-            <button className="btn btn-secondary" type="submit" disabled={isBusy || selectionSaving}>
-              更新参数
-            </button>
-            <button
-              className="btn btn-danger-outline"
-              type="button"
-              onClick={() => void onFlattenClick()}
-              disabled={isBusy || selectionSaving}
-            >
-              一键平仓
-            </button>
-          </div>
-        </form>
-      </section>
-
-      <section className="panel symbol-panel page-panel">
-        <div className="panel-title">
-          <h2>当前行情（单表）</h2>
-          <small>全量可比币对</small>
-        </div>
-        <p className="hint">
-          最近刷新 {formatTimestamp(marketResult.updatedAt)}，扫描周期约 {marketResult.scanIntervalSec} 秒，
-          配置 {marketResult.configuredSymbols} 个，可比 {marketResult.comparableSymbols} 个，可执行 {marketResult.executableSymbols} 个，
-          跳过 {marketResult.skippedCount} 个（{formatSkippedReasons(marketResult.skippedReasons)}）。
-        </p>
-        <div className="table-wrap">
-          <table className="responsive-table">
-            <thead>
-              <tr>
-                <th>#</th>
-                <th>币对</th>
-                <th>实际价差(%)</th>
-                <th>Z-score</th>
-                <th>速度(%/分钟)</th>
-                <th>波动率(%)</th>
-                <th>有效杠杆</th>
-                <th>名义价差(%)</th>
-                <th>净名义价差(%)</th>
-              </tr>
-            </thead>
-            <tbody>
-              {topRows.length === 0 ? (
-                <tr>
-                  <td colSpan={9} className="empty-cell">
-                    暂无行情数据
-                  </td>
-                </tr>
+              {selectedSymbolInfo ? (
+                <p className="hint">
+                  {selectedSymbolInfo.symbol}：
+                  {isEngineRunning
+                    ? `Spread ${formatSigned(selectedSymbolInfo.spreadBps / 100, 4)}%，zscore ${formatNumber(
+                        selectedSymbolInfo.zscore,
+                        3
+                      )}，仓位 ${formatSigned(selectedSymbolInfo.position, 4)}。`
+                    : "引擎未运行，指标将在启动后实时更新。"}
+                </p>
               ) : (
-                topRows.map((row, index) => (
-                  <tr key={row.symbol}>
-                    <td data-label="排名">{index + 1}</td>
-                    <td data-label="币对">{row.symbol}</td>
-                    <td data-label="实际价差(%)">
-                      <strong>{formatSigned(row.tradableEdgePct, 4)}%</strong>
-                    </td>
-                    <td data-label="Z-score">
-                      <strong>{formatNumber(row.zscore, 3)}</strong>
-                    </td>
-                    <td data-label="速度(%/分钟)">
-                      <strong>{formatSigned(row.spreadSpeedPctPerMin, 4)}</strong>
-                    </td>
-                    <td data-label="波动率(%)">
-                      <strong>{formatNumber(row.spreadVolatilityPct, 4)}</strong>
-                    </td>
-                    <td data-label="有效杠杆">
-                      <strong>{formatNumber(row.effectiveLeverage, 2)}x</strong>
-                    </td>
-                    <td data-label="名义价差(%)">
-                      <strong>{formatSigned(toNominalSpreadPct(row), 4)}%</strong>
-                    </td>
-                    <td data-label="净名义价差(%)">
-                      <strong>{formatSigned(toNetNominalSpreadPct(row), 4)}%</strong>
-                    </td>
-                  </tr>
-                ))
+                <p className="hint">当前没有该交易标的的实时数据。</p>
               )}
-            </tbody>
-          </table>
-        </div>
-      </section>
 
-      <section className="panel page-panel">
-        <div className="panel-title">
-          <h2>两所仓位明细</h2>
-          <small>总净敞口 {formatSigned(status.positionsSummary.totalNetExposure, 4)}</small>
-        </div>
-        <div className="table-wrap">
-          <table className="responsive-table">
-            <thead>
-              <tr>
-                <th>币对</th>
-                <th>Paradex 仓位</th>
-                <th>GRVT 仓位</th>
-                <th>净敞口</th>
-              </tr>
-            </thead>
-            <tbody>
-              {status.positionsSummary.bySymbol.length === 0 ? (
-                <tr>
-                  <td colSpan={4} className="empty-cell">
-                    暂无仓位数据
-                  </td>
-                </tr>
-              ) : (
-                status.positionsSummary.bySymbol.map((item) => (
-                  <tr key={`pos-${item.symbol}`}>
-                    <td data-label="币对">{item.symbol}</td>
-                    <td data-label="Paradex 仓位">{formatSigned(item.paradexPosition, 4)}</td>
-                    <td data-label="GRVT 仓位">{formatSigned(item.grvtPosition, 4)}</td>
-                    <td data-label="净敞口">
-                      <strong>{formatSigned(item.netExposure, 4)}</strong>
-                    </td>
+              {formError ? <p className="form-error">{formError}</p> : null}
+
+              <div className="action-row">
+                <button className="btn btn-secondary" type="submit" disabled={isBusy || selectionSaving}>
+                  更新参数
+                </button>
+                <button
+                  className="btn btn-danger-outline"
+                  type="button"
+                  onClick={() => void onFlattenClick()}
+                  disabled={isBusy || selectionSaving}
+                >
+                  一键平仓
+                </button>
+              </div>
+            </form>
+          </section>
+
+          <section className="panel positions-panel page-panel">
+            <div className="panel-title">
+              <h2>两所仓位明细</h2>
+              <small>总净敞口 {formatSigned(status.positionsSummary.totalNetExposure, 4)}</small>
+            </div>
+            <div className="table-wrap">
+              <table className="responsive-table">
+                <thead>
+                  <tr>
+                    <th>币对</th>
+                    <th>Paradex 仓位</th>
+                    <th>GRVT 仓位</th>
+                    <th>净敞口</th>
                   </tr>
-                ))
-              )}
-            </tbody>
-          </table>
+                </thead>
+                <tbody>
+                  {status.positionsSummary.bySymbol.length === 0 ? (
+                    <tr>
+                      <td colSpan={4} className="empty-cell">
+                        暂无仓位数据
+                      </td>
+                    </tr>
+                  ) : (
+                    status.positionsSummary.bySymbol.map((item) => (
+                      <tr key={`pos-${item.symbol}`}>
+                        <td data-label="币对">{item.symbol}</td>
+                        <td data-label="Paradex 仓位">{formatSigned(item.paradexPosition, 4)}</td>
+                        <td data-label="GRVT 仓位">{formatSigned(item.grvtPosition, 4)}</td>
+                        <td data-label="净敞口">
+                          <strong>{formatSigned(item.netExposure, 4)}</strong>
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </section>
         </div>
-      </section>
+      </div>
 
       <section className="panel event-panel page-panel">
         <div className="panel-title">
