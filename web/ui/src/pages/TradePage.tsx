@@ -150,6 +150,10 @@ export default function TradePage() {
     () => status.riskCounts.normal + status.riskCounts.warning + status.riskCounts.critical,
     [status.riskCounts.critical, status.riskCounts.normal, status.riskCounts.warning]
   );
+  const allZscoreZero = useMemo(
+    () => symbols.length > 0 && symbols.every((item) => Math.abs(item.zscore) < 1e-9),
+    [symbols]
+  );
 
   const onModeSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -170,7 +174,7 @@ export default function TradePage() {
 
     setSelectionSaving(true);
     try {
-      const result = await apiClient.setTradeSelection(selectedSymbol, { forceRefresh: true });
+      const result = await apiClient.setTradeSelection(selectedSymbol, { forceRefresh: false });
       if (!result.ok) {
         throw new Error(result.message || "设置交易标的失败");
       }
@@ -437,6 +441,7 @@ export default function TradePage() {
           <small>共 {symbols.length} 个交易对</small>
         </div>
         {!isEngineRunning ? <p className="hint">引擎未运行，以下指标为停机态展示（--）。</p> : null}
+        {isEngineRunning && allZscoreZero ? <p className="hint">当前 Z-score 全为 0，通常表示策略仍在预热或盘口暂不可用。</p> : null}
         <div className="table-wrap">
           <table>
             <thead>

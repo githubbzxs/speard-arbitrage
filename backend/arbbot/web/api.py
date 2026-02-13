@@ -71,7 +71,7 @@ def create_app(config: AppConfig) -> FastAPI:
     orchestrator = ArbitrageOrchestrator(config)
     credentials_repository = CredentialsRepository(config.storage.sqlite_path)
     credentials_validator = CredentialsValidator(config)
-    market_scanner = NominalSpreadScanner(config=config)
+    market_scanner = NominalSpreadScanner(config=config, scan_interval_sec=60)
     top_limit = 10
     selected_symbol = ""
     selected_symbol_config: SymbolConfig | None = None
@@ -173,9 +173,17 @@ def create_app(config: AppConfig) -> FastAPI:
                 selected_symbol_config = next_selected_config
                 orchestrator.set_selected_symbol(next_selected_config)
 
-    async def refresh_top10_candidates(force_refresh: bool = False, reconcile_selected: bool = True) -> dict[str, Any]:
+    async def refresh_top10_candidates(
+        force_refresh: bool = False,
+        reconcile_selected: bool = True,
+        timeout_sec: float | None = None,
+    ) -> dict[str, Any]:
         hydrate_runtime_credentials_from_saved()
-        payload = await market_scanner.get_top_spreads(limit=top_limit, force_refresh=force_refresh)
+        fetch_coro = market_scanner.get_top_spreads(limit=top_limit, force_refresh=force_refresh)
+        if timeout_sec is not None and timeout_sec > 0:
+            payload = await asyncio.wait_for(fetch_coro, timeout=timeout_sec)
+        else:
+            payload = await fetch_coro
         apply_top10_payload(payload, reconcile_selected=reconcile_selected)
         return payload
 
@@ -211,7 +219,7 @@ def create_app(config: AppConfig) -> FastAPI:
         while not market_top_push_stop.is_set():
             try:
                 if market_ws_queues:
-                    payload = await refresh_top10_candidates(force_refresh=True, reconcile_selected=False)
+                    payload = await refresh_top10_candidates(force_refresh=False, reconcile_selected=False)
                     await broadcast_market_top_spreads(payload)
             except Exception:
                 # 忽略单次推送错误，下一轮继续。
@@ -292,7 +300,22 @@ def create_app(config: AppConfig) -> FastAPI:
 
     @app.get("/api/trade/selection")
     async def get_trade_selection(force_refresh: bool = False) -> dict[str, Any]:
-        await refresh_top10_candidates(force_refresh=force_refresh, reconcile_selected=True)
+        if not force_refresh and top10_candidates:
+            return {
+                "selected_symbol": selected_symbol,
+                "top10_candidates": top10_candidates,
+                "updated_at": top10_updated_at,
+            }
+
+        try:
+            await refresh_top10_candidates(
+                force_refresh=force_refresh,
+                reconcile_selected=True,
+                timeout_sec=6 if not force_refresh else 12,
+            )
+        except asyncio.TimeoutError:
+            pass
+
         return {
             "selected_symbol": selected_symbol,
             "top10_candidates": top10_candidates,
@@ -314,7 +337,15 @@ def create_app(config: AppConfig) -> FastAPI:
         if not symbol:
             raise HTTPException(status_code=400, detail="symbol 不能为空")
 
-        await refresh_top10_candidates(force_refresh=payload.force_refresh, reconcile_selected=True)
+        try:
+            await refresh_top10_candidates(
+                force_refresh=payload.force_refresh,
+                reconcile_selected=True,
+                timeout_sec=12,
+            )
+        except asyncio.TimeoutError:
+            if not top10_symbol_map:
+                raise HTTPException(status_code=504, detail="Top10 候选加载超时，请稍后重试")
         symbol_cfg = top10_symbol_map.get(symbol)
         if symbol_cfg is None:
             raise HTTPException(status_code=400, detail="symbol 不在当前 Top10 候选中")
@@ -463,7 +494,28 @@ def create_app(config: AppConfig) -> FastAPI:
                 },
             }
             await ws.send_json(init_payload)
-            initial_market_payload = await refresh_top10_candidates(force_refresh=False, reconcile_selected=False)
+            try:
+                initial_market_payload = await refresh_top10_candidates(
+                    force_refresh=False,
+                    reconcile_selected=False,
+                    timeout_sec=6,
+                )
+            except asyncio.TimeoutError:
+                initial_market_payload = {
+                    "updated_at": top10_updated_at or utc_iso(),
+                    "scan_interval_sec": int(getattr(market_scanner, "_scan_interval_sec", 60)),
+                    "limit": top_limit,
+                    "configured_symbols": len(config.symbols),
+                    "comparable_symbols": 0,
+                    "executable_symbols": 0,
+                    "scanned_symbols": 0,
+                    "total_symbols": 0,
+                    "skipped_count": 0,
+                    "skipped_reasons": {},
+                    "fee_profile": {"paradex_leg": "taker", "grvt_leg": "maker"},
+                    "last_error": "Top10 候选初始化较慢，后台加载中",
+                    "rows": [],
+                }
             await ws.send_json({"type": "market_top_spreads", "data": initial_market_payload})
 
             while True:

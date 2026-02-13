@@ -162,6 +162,11 @@
   - Impact：`web/ui/src/pages/TradePage.tsx`。
   - Verify：`cd web/ui && npm run build`，确认点击“应用交易标的”后才可启动；引擎未运行时交易对指标显示 `--`。
 
+- [2026-02-13] 降低 Top10 首次加载超时风险并加强零值提示
+  - Why：修复下单页启动时偶发 `Top10 交易候选请求超时`，并解释 `Z-score` 全 0 常见于预热/盘口暂不可用。
+  - Impact：`backend/arbbot/web/api.py`、`web/ui/src/api/client.ts`、`web/ui/src/pages/TradePage.tsx`。
+  - Verify：`python -m pytest backend/tests`、`cd web/ui && npm run build`，并确认下单页不再频繁出现 8s 超时，运行中若全 0 会出现提示文案。
+
 ## Commands
 - 后端测试：`python -m pytest backend/tests`
 - 后端启动：`python backend/main.py`
