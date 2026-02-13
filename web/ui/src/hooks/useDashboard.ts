@@ -25,6 +25,7 @@ import { WsStreamClient } from "../ws/client";
 
 const EVENTS_LIMIT = 200;
 const POLL_INTERVAL_MS = 15000;
+const WS_SYMBOL_FLUSH_MS = 250;
 
 const DEFAULT_WS_STATUS: WsConnectionStatus = {
   state: "connecting",
@@ -78,9 +79,39 @@ export function useDashboard() {
   const [busyAction, setBusyAction] = useState<string | null>(null);
   const [wsStatus, setWsStatus] = useState<WsConnectionStatus>(DEFAULT_WS_STATUS);
   const offlineHintShownRef = useRef(false);
+  const pendingSymbolUpdatesRef = useRef<Record<string, SymbolRow>>({});
+  const symbolFlushTimerRef = useRef<number | null>(null);
 
   const pushEvent = useCallback((event: EventLog) => {
     setEvents((previous) => limitEvents(sortEvents([event, ...previous])));
+  }, []);
+
+  const flushPendingSymbols = useCallback(() => {
+    symbolFlushTimerRef.current = null;
+
+    const pending = pendingSymbolUpdatesRef.current;
+    pendingSymbolUpdatesRef.current = {};
+    const updates = Object.values(pending);
+    if (updates.length === 0) {
+      return;
+    }
+
+    // 合并一批 symbol 更新，避免 WebSocket 高频推送导致 UI 持续抖动。
+    setSymbols((previous) => {
+      let next = previous;
+      for (const item of updates) {
+        next = upsertSymbol(next, item);
+      }
+      return next;
+    });
+  }, []);
+
+  const clearPendingSymbolUpdates = useCallback(() => {
+    if (symbolFlushTimerRef.current !== null) {
+      window.clearTimeout(symbolFlushTimerRef.current);
+      symbolFlushTimerRef.current = null;
+    }
+    pendingSymbolUpdatesRef.current = {};
   }, []);
 
   const loadDashboard = useCallback(
@@ -162,10 +193,16 @@ export function useDashboard() {
       if (message.type === "symbol") {
         const next = normalizeSymbol(message.data);
         if (next) {
-          setSymbols((previous) => upsertSymbol(previous, next));
+          pendingSymbolUpdatesRef.current[next.symbol] = next;
+          if (symbolFlushTimerRef.current === null) {
+            symbolFlushTimerRef.current = window.setTimeout(flushPendingSymbols, WS_SYMBOL_FLUSH_MS);
+          }
         }
         return;
       }
+
+      // snapshot 到来时，以聚合数据为准，清空等待刷新队列，避免旧的 symbol 更新覆盖新快照。
+      clearPendingSymbolUpdates();
 
       const payload = toRecord(message.data);
       if (!payload) {
@@ -189,7 +226,7 @@ export function useDashboard() {
         }
       }
     },
-    [pushEvent]
+    [clearPendingSymbolUpdates, flushPendingSymbols, pushEvent]
   );
 
   useEffect(() => {
@@ -201,9 +238,10 @@ export function useDashboard() {
     client.connect();
 
     return () => {
+      clearPendingSymbolUpdates();
       client.disconnect();
     };
-  }, [handleWsMessage]);
+  }, [clearPendingSymbolUpdates, handleWsMessage]);
 
   const runAction = useCallback(
     async (actionKey: string, actionName: string, action: () => Promise<ActionResult>): Promise<boolean> => {

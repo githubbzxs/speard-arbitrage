@@ -25,7 +25,8 @@ class ParadexAdapter(BaseExchangeAdapter):
     async def connect(self, symbols: list[SymbolConfig]) -> None:
         self._symbols = {cfg.symbol: cfg for cfg in symbols}
         for cfg in symbols:
-            self._sim_mid.setdefault(cfg.symbol, Decimal("50000"))
+            # dry-run 下的模拟行情应尽量贴近真实价格区间，避免 UI 端出现“价差 100+”这类误解。
+            self._sim_mid.setdefault(cfg.symbol, self._infer_anchor_mid(cfg.symbol))
             self._sim_pos.setdefault(cfg.symbol, Decimal("0"))
 
         if self.dry_run:
@@ -217,9 +218,14 @@ class ParadexAdapter(BaseExchangeAdapter):
             return False
 
     def _simulate_bbo(self, symbol: str, source: str) -> BBO:
-        mid = self._sim_mid.get(symbol, Decimal("50000"))
-        drift = Decimal(str(random.uniform(-0.00035, 0.00035)))
-        mid = max(Decimal("50"), mid * (Decimal("1") + drift))
+        anchor = self._infer_anchor_mid(symbol)
+        mid = self._sim_mid.get(symbol, anchor)
+
+        # 使用“轻微随机 + 轻微均值回归”生成更稳定的模拟价格，避免随机游走长期漂移过大。
+        drift = Decimal(str(random.uniform(-0.00005, 0.00005)))
+        mid = mid * (Decimal("1") + drift)
+        mid = mid + (anchor - mid) * Decimal("0.03")
+        mid = max(Decimal("1"), mid)
         self._sim_mid[symbol] = mid
 
         spread = max(Decimal("0.5"), mid * Decimal("0.0002"))
@@ -233,3 +239,15 @@ class ParadexAdapter(BaseExchangeAdapter):
             ask -= bias
 
         return BBO(bid=bid, ask=ask, source=source)
+
+    @staticmethod
+    def _infer_anchor_mid(symbol: str) -> Decimal:
+        """根据 symbol 粗略推断一个合理的“锚定价格”用于 dry-run 行情。"""
+        normalized = symbol.upper()
+        if normalized.startswith("BTC"):
+            return Decimal("50000")
+        if normalized.startswith("ETH"):
+            return Decimal("2500")
+        if normalized.startswith("SOL"):
+            return Decimal("150")
+        return Decimal("1000")
