@@ -135,6 +135,10 @@ export interface TradeTopCandidate {
   tradableEdgeBps: number;
   grossNominalSpread: number;
   zscore: number;
+  zscoreReady: boolean;
+  zscoreStatus: string;
+  historySamples: number;
+  requiredSamples: number;
   spreadSpeedPctPerMin: number;
   spreadVolatilityPct: number;
 }
@@ -192,6 +196,10 @@ export interface MarketTopSpreadRow {
   feeCostEstimate: number;
   netNominalSpread: number;
   zscore: number;
+  zscoreReady: boolean;
+  zscoreStatus: string;
+  historySamples: number;
+  requiredSamples: number;
   spreadSpeedPctPerMin: number;
   spreadVolatilityPct: number;
   speedSamples: number;
@@ -201,6 +209,17 @@ export interface MarketTopSpreadRow {
     paradex: "api" | "official";
     grvt: "api" | "official";
   };
+  updatedAt: string;
+}
+
+export interface MarketWarmupProgress {
+  done: boolean;
+  message: string;
+  requiredSamples: number;
+  symbolsTotal: number;
+  symbolsReady: number;
+  symbolsPending: number;
+  sampleCounts: Record<string, number>;
   updatedAt: string;
 }
 
@@ -220,6 +239,8 @@ export interface MarketTopSpreadsResponse {
     grvtLeg: "maker" | "taker";
   };
   lastError: string | null;
+  warmupDone: boolean;
+  warmupProgress: MarketWarmupProgress;
   rows: MarketTopSpreadRow[];
 }
 

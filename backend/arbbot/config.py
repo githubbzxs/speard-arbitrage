@@ -256,6 +256,17 @@ class RuntimeConfig:
 
 
 @dataclass(slots=True)
+class MarketWarmupConfig:
+    """市场扫描预热配置。"""
+
+    enabled: bool = False
+    require_ready_for_market_api: bool = False
+    timeout_sec: int = 90
+    scan_interval_ms: int = 300
+    history_retention: int = 2000
+
+
+@dataclass(slots=True)
 class AppConfig:
     """应用总配置。"""
 
@@ -267,6 +278,7 @@ class AppConfig:
     storage: StorageConfig = field(default_factory=StorageConfig)
     web: WebConfig = field(default_factory=WebConfig)
     runtime: RuntimeConfig = field(default_factory=RuntimeConfig)
+    market_warmup: MarketWarmupConfig = field(default_factory=MarketWarmupConfig)
     rate_limits: dict[str, dict[str, tuple[float, float]]] = field(default_factory=dict)
 
     @classmethod
@@ -389,6 +401,13 @@ class AppConfig:
             enable_order_confirmation_text=confirm_text or "ENABLE_LIVE_ORDER",
             default_mode=default_mode,
         )
+        market_warmup = MarketWarmupConfig(
+            enabled=_to_bool(os.getenv("ARB_MARKET_WARMUP_ENABLED"), True),
+            require_ready_for_market_api=_to_bool(os.getenv("ARB_MARKET_API_REQUIRE_WARMUP"), True),
+            timeout_sec=max(1, _to_int(os.getenv("ARB_MARKET_WARMUP_TIMEOUT_SEC"), 90)),
+            scan_interval_ms=max(50, _to_int(os.getenv("ARB_MARKET_WARMUP_SCAN_INTERVAL_MS"), 300)),
+            history_retention=max(200, _to_int(os.getenv("ARB_MARKET_HISTORY_RETENTION"), 2000)),
+        )
 
         rate_limits = {
             "paradex": {
@@ -422,6 +441,7 @@ class AppConfig:
             storage=storage,
             web=web,
             runtime=runtime,
+            market_warmup=market_warmup,
             rate_limits=rate_limits,
         )
 
@@ -464,5 +484,12 @@ class AppConfig:
                 "live_order_enabled": self.runtime.live_order_enabled,
                 "enable_order_confirmation_text": self.runtime.enable_order_confirmation_text,
                 "default_mode": self.runtime.default_mode.value,
+            },
+            "market_warmup": {
+                "enabled": self.market_warmup.enabled,
+                "require_ready_for_market_api": self.market_warmup.require_ready_for_market_api,
+                "timeout_sec": self.market_warmup.timeout_sec,
+                "scan_interval_ms": self.market_warmup.scan_interval_ms,
+                "history_retention": self.market_warmup.history_retention,
             },
         }

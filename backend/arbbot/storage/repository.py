@@ -60,6 +60,30 @@ class Repository:
                 )
                 """
             )
+            self._conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS market_spread_history (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    ts TEXT NOT NULL,
+                    symbol TEXT NOT NULL,
+                    signed_edge_bps TEXT NOT NULL,
+                    tradable_edge_pct TEXT NOT NULL,
+                    source TEXT NOT NULL DEFAULT 'scanner'
+                )
+                """
+            )
+            self._conn.execute(
+                """
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_market_spread_history_unique
+                ON market_spread_history(symbol, ts, source)
+                """
+            )
+            self._conn.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_market_spread_history_symbol_id
+                ON market_spread_history(symbol, id)
+                """
+            )
 
     def add_event(self, event: EventRecord) -> None:
         with self._lock, self._conn:
@@ -139,6 +163,76 @@ class Repository:
             ).fetchall()
 
         return [json.loads(row[1]) for row in rows]
+
+    def add_market_spread_point(
+        self,
+        ts: str,
+        symbol: str,
+        signed_edge_bps: str,
+        tradable_edge_pct: str,
+        source: str = "scanner",
+    ) -> None:
+        with self._lock, self._conn:
+            self._conn.execute(
+                """
+                INSERT OR IGNORE INTO market_spread_history
+                (ts, symbol, signed_edge_bps, tradable_edge_pct, source)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (ts, symbol, signed_edge_bps, tradable_edge_pct, source),
+            )
+
+    def list_recent_market_spread_points(self, symbol: str, limit: int) -> list[dict]:
+        resolved_limit = max(1, int(limit))
+        with self._lock:
+            rows = self._conn.execute(
+                """
+                SELECT ts, signed_edge_bps, tradable_edge_pct, source
+                FROM market_spread_history
+                WHERE symbol = ?
+                ORDER BY id DESC
+                LIMIT ?
+                """,
+                (symbol, resolved_limit),
+            ).fetchall()
+
+        output: list[dict] = []
+        for ts, signed_edge_bps, tradable_edge_pct, source in rows:
+            output.append(
+                {
+                    "ts": ts,
+                    "signed_edge_bps": signed_edge_bps,
+                    "tradable_edge_pct": tradable_edge_pct,
+                    "source": source,
+                }
+            )
+        return output
+
+    def count_market_spread_points(self, symbol: str) -> int:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT COUNT(*) FROM market_spread_history WHERE symbol = ?",
+                (symbol,),
+            ).fetchone()
+        return int(row[0] if row else 0)
+
+    def trim_market_spread_history(self, symbol: str, max_rows: int) -> None:
+        resolved_max_rows = max(1, int(max_rows))
+        with self._lock, self._conn:
+            self._conn.execute(
+                """
+                DELETE FROM market_spread_history
+                WHERE symbol = ?
+                  AND id NOT IN (
+                    SELECT id
+                    FROM market_spread_history
+                    WHERE symbol = ?
+                    ORDER BY id DESC
+                    LIMIT ?
+                  )
+                """,
+                (symbol, symbol, resolved_max_rows),
+            )
 
     def close(self) -> None:
         self._conn.close()

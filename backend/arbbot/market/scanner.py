@@ -7,6 +7,7 @@ import json
 import sqlite3
 import time
 from collections import deque
+from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
 from statistics import mean, pstdev
 from typing import Any
@@ -26,6 +27,11 @@ DEFAULT_SCAN_INTERVAL_SEC = 300
 DEFAULT_TOP_LIMIT = 200
 MAX_TOP_LIMIT = 2000
 DEFAULT_SPEED_WINDOW_SEC = 600
+DEFAULT_WARMUP_POLL_SEC = 0.3
+
+ZSCORE_STATUS_READY = "ready"
+ZSCORE_STATUS_INSUFFICIENT_SAMPLES = "insufficient_samples"
+ZSCORE_STATUS_ZERO_STD = "zero_std"
 
 # 官方兜底费率（当接口字段缺失时使用）：
 # Paradex: https://docs.paradex.trade/risk/fees-and-discounts
@@ -174,6 +180,10 @@ class NominalSpreadScanner:
         self._config = config
         self._scan_interval_sec = max(5, int(scan_interval_sec))
         self._default_limit = max(1, min(int(default_limit), MAX_TOP_LIMIT))
+        self._history_retention = max(
+            self._history_capacity(),
+            int(getattr(getattr(config, "market_warmup", None), "history_retention", 2000)),
+        )
 
         self._rows: list[dict[str, Any]] = []
         self._updated_at = ""
@@ -186,10 +196,131 @@ class NominalSpreadScanner:
         self._lock = asyncio.Lock()
         self._history_by_symbol: dict[str, deque[Decimal]] = {}
         self._history_seeded_symbols: set[str] = set()
+        self._history_append_counter_by_symbol: dict[str, int] = {}
         self._edge_pct_history_by_symbol: dict[str, deque[tuple[float, Decimal]]] = {}
+        self._warmup_required_samples = max(1, int(self._config.strategy.min_samples))
+        self._warmup_done = False
+        self._warmup_last_message = "尚未开始"
+        self._warmup_symbol_total = 0
+        self._warmup_symbol_ready = 0
+        self._warmup_symbol_samples: dict[str, int] = {}
+        self._warmup_symbols: list[str] = []
+        self._ensure_market_history_schema()
 
     def _edge_pct_history_for(self, symbol: str) -> deque[tuple[float, Decimal]]:
         return self._edge_pct_history_by_symbol.setdefault(symbol, deque(maxlen=240))
+
+    def _ensure_market_history_schema(self) -> None:
+        sqlite_path = str(self._config.storage.sqlite_path).strip()
+        if not sqlite_path:
+            return
+        try:
+            conn = sqlite3.connect(sqlite_path)
+            try:
+                with conn:
+                    conn.execute(
+                        """
+                        CREATE TABLE IF NOT EXISTS market_spread_history (
+                            id INTEGER PRIMARY KEY AUTOINCREMENT,
+                            ts TEXT NOT NULL,
+                            symbol TEXT NOT NULL,
+                            signed_edge_bps TEXT NOT NULL,
+                            tradable_edge_pct TEXT NOT NULL,
+                            source TEXT NOT NULL DEFAULT 'scanner'
+                        )
+                        """
+                    )
+                    conn.execute(
+                        """
+                        CREATE UNIQUE INDEX IF NOT EXISTS idx_market_spread_history_unique
+                        ON market_spread_history(symbol, ts, source)
+                        """
+                    )
+                    conn.execute(
+                        """
+                        CREATE INDEX IF NOT EXISTS idx_market_spread_history_symbol_id
+                        ON market_spread_history(symbol, id)
+                        """
+                    )
+            finally:
+                conn.close()
+        except Exception:
+            return
+
+    def _append_market_history_point(
+        self,
+        *,
+        symbol: str,
+        signed_edge_bps: Decimal,
+        tradable_edge_pct: Decimal,
+        ts: str | None = None,
+        source: str = "scanner",
+    ) -> None:
+        history = self._history_for(symbol)
+
+        sqlite_path = str(self._config.storage.sqlite_path).strip()
+        if not sqlite_path:
+            history.append(signed_edge_bps)
+            return
+
+        inserted = True
+        try:
+            conn = sqlite3.connect(sqlite_path)
+            try:
+                with conn:
+                    cursor = conn.execute(
+                        """
+                        INSERT OR IGNORE INTO market_spread_history
+                        (ts, symbol, signed_edge_bps, tradable_edge_pct, source)
+                        VALUES (?, ?, ?, ?, ?)
+                        """,
+                        (
+                            ts or utc_iso(),
+                            symbol,
+                            str(signed_edge_bps),
+                            str(tradable_edge_pct),
+                            source,
+                        ),
+                    )
+                inserted = bool(cursor.rowcount)
+            finally:
+                conn.close()
+        except Exception:
+            history.append(signed_edge_bps)
+            return
+
+        if not inserted:
+            return
+
+        history.append(signed_edge_bps)
+
+        current_count = self._history_append_counter_by_symbol.get(symbol, 0) + 1
+        self._history_append_counter_by_symbol[symbol] = current_count
+        if current_count % 20 != 0:
+            return
+
+        try:
+            conn = sqlite3.connect(sqlite_path)
+            try:
+                with conn:
+                    conn.execute(
+                        """
+                        DELETE FROM market_spread_history
+                        WHERE symbol = ?
+                          AND id NOT IN (
+                            SELECT id
+                            FROM market_spread_history
+                            WHERE symbol = ?
+                            ORDER BY id DESC
+                            LIMIT ?
+                          )
+                        """,
+                        (symbol, symbol, self._history_retention),
+                    )
+            finally:
+                conn.close()
+        except Exception:
+            return
 
     def _compute_spread_speed_metrics(self, symbol: str, edge_pct: Decimal) -> tuple[Decimal, Decimal, int]:
         now_ts = time.time()
@@ -220,7 +351,7 @@ class NominalSpreadScanner:
         return max(self._config.strategy.ma_window, self._config.strategy.std_window) * 2
 
     def _history_for(self, symbol: str) -> deque[Decimal]:
-        return self._history_by_symbol.setdefault(symbol, deque(maxlen=self._history_capacity()))
+        return self._history_by_symbol.setdefault(symbol, deque(maxlen=self._history_retention))
 
     def _seed_history_from_repository(self, symbol: str) -> None:
         if symbol in self._history_seeded_symbols:
@@ -236,25 +367,51 @@ class NominalSpreadScanner:
         try:
             conn = sqlite3.connect(sqlite_path)
             try:
-                rows = conn.execute(
+                history_rows = conn.execute(
                     """
-                    SELECT data_json
-                    FROM symbol_snapshots
+                    SELECT signed_edge_bps
+                    FROM market_spread_history
                     WHERE symbol = ?
                     ORDER BY id DESC
                     LIMIT ?
                     """,
-                    (symbol, self._history_capacity()),
+                    (symbol, self._history_retention),
                 ).fetchall()
+                has_market_history = len(history_rows) > 0
+                if not has_market_history:
+                    snapshot_rows = conn.execute(
+                        """
+                        SELECT ts, data_json
+                        FROM symbol_snapshots
+                        WHERE symbol = ?
+                        ORDER BY id DESC
+                        LIMIT ?
+                        """,
+                        (symbol, self._history_retention),
+                    ).fetchall()
+                else:
+                    snapshot_rows = []
             finally:
                 conn.close()
         except Exception:
             return
 
-        for row in reversed(rows):
-            if not row:
+        if history_rows:
+            for row in reversed(history_rows):
+                if not row:
+                    continue
+                value = _to_decimal(row[0])
+                if value is None:
+                    continue
+                history.append(value)
+            return
+
+        migrated_points: list[tuple[str, Decimal]] = []
+        for row in reversed(snapshot_rows):
+            if not row or len(row) < 2:
                 continue
-            raw_payload = row[0]
+            raw_ts = row[0]
+            raw_payload = row[1]
             if not isinstance(raw_payload, str) or not raw_payload.strip():
                 continue
             try:
@@ -266,24 +423,116 @@ class NominalSpreadScanner:
             value = _to_decimal(parsed.get("spread_bps"))
             if value is None:
                 continue
-            history.append(value)
+            migrated_points.append((str(raw_ts or utc_iso()), value))
 
-    def _compute_zscore(self, symbol: str, signed_edge_bps: Decimal) -> Decimal:
+        for ts, value in migrated_points:
+            self._append_market_history_point(
+                symbol=symbol,
+                signed_edge_bps=value,
+                tradable_edge_pct=value / Decimal("100"),
+                ts=ts,
+                source="snapshot_migration",
+            )
+
+    def _compute_zscore(self, symbol: str) -> tuple[Decimal, str, int]:
         self._seed_history_from_repository(symbol)
         history = self._history_for(symbol)
-        history.append(signed_edge_bps)
 
         samples = list(history)
-        if len(samples) < self._config.strategy.min_samples:
-            return Decimal("0")
+        sample_count = len(samples)
+        if sample_count < self._config.strategy.min_samples:
+            return Decimal("0"), ZSCORE_STATUS_INSUFFICIENT_SAMPLES, sample_count
 
-        ma_window = max(1, min(self._config.strategy.ma_window, len(samples)))
-        std_window = max(1, min(self._config.strategy.std_window, len(samples)))
+        ma_window = max(1, min(self._config.strategy.ma_window, sample_count))
+        std_window = max(1, min(self._config.strategy.std_window, sample_count))
         ma_value = Decimal(str(mean([float(x) for x in samples[-ma_window:]])))
         std_value = Decimal(str(pstdev([float(x) for x in samples[-std_window:]])))
         if std_value <= 0:
-            return Decimal("0")
-        return (signed_edge_bps - ma_value) / std_value
+            return Decimal("0"), ZSCORE_STATUS_ZERO_STD, sample_count
+
+        current_value = samples[-1]
+        zscore = (current_value - ma_value) / std_value
+        return zscore, ZSCORE_STATUS_READY, sample_count
+
+    def _update_warmup_progress(self, symbols: list[str]) -> None:
+        unique_symbols = sorted({item.strip().upper() for item in symbols if item and item.strip()})
+        self._warmup_symbols = unique_symbols
+        self._warmup_symbol_total = len(unique_symbols)
+
+        samples_map: dict[str, int] = {}
+        ready_count = 0
+        for symbol in unique_symbols:
+            self._seed_history_from_repository(symbol)
+            sample_count = len(self._history_for(symbol))
+            samples_map[symbol] = sample_count
+            if sample_count >= self._warmup_required_samples:
+                ready_count += 1
+
+        self._warmup_symbol_samples = samples_map
+        self._warmup_symbol_ready = ready_count
+        if self._warmup_symbol_total == 0:
+            self._warmup_done = True
+            self._warmup_last_message = "无需预热：暂无可比币对"
+            return
+
+        self._warmup_done = self._warmup_symbol_ready >= self._warmup_symbol_total
+        if self._warmup_done:
+            self._warmup_last_message = "预热完成"
+        else:
+            self._warmup_last_message = (
+                f"预热中：{self._warmup_symbol_ready}/{self._warmup_symbol_total} "
+                f"个币对达到 {self._warmup_required_samples} 样本"
+            )
+
+    def get_warmup_status(self) -> dict[str, Any]:
+        remaining = max(0, self._warmup_symbol_total - self._warmup_symbol_ready)
+        return {
+            "done": self._warmup_done,
+            "message": self._warmup_last_message,
+            "required_samples": self._warmup_required_samples,
+            "symbols_total": self._warmup_symbol_total,
+            "symbols_ready": self._warmup_symbol_ready,
+            "symbols_pending": remaining,
+            "sample_counts": dict(self._warmup_symbol_samples),
+            "updated_at": self._updated_at or utc_iso(),
+        }
+
+    def is_warmup_ready(self) -> bool:
+        return bool(self._warmup_done)
+
+    def build_warmup_payload(self, *, limit: int) -> dict[str, Any]:
+        status = self.get_warmup_status()
+        return {
+            "updated_at": self._updated_at or utc_iso(),
+            "scan_interval_sec": self._scan_interval_sec,
+            "limit": max(0, int(limit)),
+            "configured_symbols": self._configured_symbols,
+            "comparable_symbols": self._comparable_symbols,
+            "executable_symbols": 0,
+            "scanned_symbols": self._scanned_symbols,
+            "total_symbols": 0,
+            "skipped_count": sum(self._skipped_reasons.values()),
+            "skipped_reasons": self._skipped_reasons,
+            "fee_profile": {"paradex_leg": "taker", "grvt_leg": "maker"},
+            "last_error": status["message"],
+            "warmup_done": False,
+            "warmup_progress": status,
+            "rows": [],
+        }
+
+    async def warmup_until_ready(
+        self,
+        *,
+        timeout_sec: float,
+        poll_sec: float = DEFAULT_WARMUP_POLL_SEC,
+    ) -> dict[str, Any]:
+        deadline = time.monotonic() + max(1.0, float(timeout_sec))
+        while time.monotonic() < deadline:
+            await self._ensure_cache(force_refresh=True)
+            if self.is_warmup_ready():
+                return self.get_warmup_status()
+            await asyncio.sleep(max(0.05, float(poll_sec)))
+        return self.get_warmup_status()
 
     async def get_top_spreads(
         self,
@@ -309,6 +558,8 @@ class NominalSpreadScanner:
             resolved_limit = max(1, min(requested_limit, MAX_TOP_LIMIT))
             output_rows = sorted_rows[:resolved_limit]
 
+        warmup_status = self.get_warmup_status()
+
         return {
             "updated_at": self._updated_at,
             "scan_interval_sec": self._scan_interval_sec,
@@ -325,6 +576,8 @@ class NominalSpreadScanner:
                 "grvt_leg": "maker",
             },
             "last_error": self._last_error or None,
+            "warmup_done": warmup_status["done"],
+            "warmup_progress": warmup_status,
             "rows": output_rows,
         }
 
@@ -346,12 +599,13 @@ class NominalSpreadScanner:
 
     async def _refresh_once(self) -> None:
         try:
-            scanned_rows, configured_symbols, comparable_symbols, skipped_reasons = await self._scan_all_symbols()
+            scanned_rows, configured_symbols, comparable_symbols, skipped_reasons, warmup_symbols = await self._scan_all_symbols()
             self._rows = scanned_rows
             self._configured_symbols = configured_symbols
             self._comparable_symbols = comparable_symbols
             self._scanned_symbols = comparable_symbols
             self._skipped_reasons = skipped_reasons
+            self._update_warmup_progress(warmup_symbols)
             self._updated_at = utc_iso()
             self._last_refresh_monotonic = time.monotonic()
             self._last_error = ""
@@ -365,7 +619,7 @@ class NominalSpreadScanner:
             if not self._rows:
                 self._rows = []
 
-    async def _scan_all_symbols(self) -> tuple[list[dict[str, Any]], int, int, dict[str, int]]:
+    async def _scan_all_symbols(self) -> tuple[list[dict[str, Any]], int, int, dict[str, int], list[str]]:
         paradex_client = ccxt.paradex({"enableRateLimit": True})
         grvt_client = GrvtCcxtPro(env=self._resolve_grvt_ccxt_env(), parameters=self._build_grvt_ccxt_params())
 
@@ -377,6 +631,14 @@ class NominalSpreadScanner:
             grvt_map = self._collect_grvt_markets(grvt_client.markets, grvt_leverage_map)
 
             shared_bases = sorted(set(paradex_map.keys()) & set(grvt_map.keys()))
+            warmup_symbols = [f"{base}-PERP" for base in shared_bases]
+            await self._backfill_missing_history(
+                paradex_client=paradex_client,
+                grvt_client=grvt_client,
+                shared_bases=shared_bases,
+                paradex_map=paradex_map,
+                grvt_map=grvt_map,
+            )
             configured_bases = {
                 str(cfg.base_asset).upper().strip()
                 for cfg in self._config.symbols
@@ -405,12 +667,118 @@ class NominalSpreadScanner:
                 elif reason:
                     skipped_reasons[reason] = skipped_reasons.get(reason, 0) + 1
 
-            return rows, len(configured_bases), len(shared_bases), skipped_reasons
+            return rows, len(configured_bases), len(shared_bases), skipped_reasons, warmup_symbols
         finally:
             await paradex_client.close()
             session = getattr(grvt_client, "_session", None)
             if session is not None and not session.closed:
                 await session.close()
+
+    async def _backfill_missing_history(
+        self,
+        *,
+        paradex_client: Any,
+        grvt_client: Any,
+        shared_bases: list[str],
+        paradex_map: dict[str, dict[str, Any]],
+        grvt_map: dict[str, dict[str, Any]],
+    ) -> None:
+        if not shared_bases:
+            return
+
+        semaphore = asyncio.Semaphore(4)
+
+        async def backfill_one(base_asset: str) -> None:
+            symbol = f"{base_asset}-PERP"
+            self._seed_history_from_repository(symbol)
+            history = self._history_for(symbol)
+            missing = self._warmup_required_samples - len(history)
+            if missing <= 0:
+                return
+            paradex_market = str(paradex_map.get(base_asset, {}).get("market") or "").strip()
+            grvt_market = str(grvt_map.get(base_asset, {}).get("market") or "").strip()
+            if not paradex_market or not grvt_market:
+                return
+
+            async with semaphore:
+                await self._backfill_symbol_history_from_ohlcv(
+                    paradex_client=paradex_client,
+                    grvt_client=grvt_client,
+                    symbol=symbol,
+                    paradex_market=paradex_market,
+                    grvt_market=grvt_market,
+                    missing_samples=missing,
+                )
+
+        await asyncio.gather(*(backfill_one(base_asset) for base_asset in shared_bases), return_exceptions=True)
+
+    async def _backfill_symbol_history_from_ohlcv(
+        self,
+        *,
+        paradex_client: Any,
+        grvt_client: Any,
+        symbol: str,
+        paradex_market: str,
+        grvt_market: str,
+        missing_samples: int,
+    ) -> None:
+        # 缺口补齐策略：优先拉取两所 1m K 线，按时间戳对齐后回填 signed_edge_bps。
+        fetch_limit = max(self._warmup_required_samples * 4, missing_samples * 6, 120)
+        fetch_limit = min(fetch_limit, 720)
+
+        paradex_task = paradex_client.fetch_ohlcv(paradex_market, timeframe="1m", limit=fetch_limit)
+        grvt_task = grvt_client.fetch_ohlcv(grvt_market, timeframe="1m", limit=fetch_limit)
+        paradex_ohlcv, grvt_ohlcv = await asyncio.gather(paradex_task, grvt_task, return_exceptions=True)
+
+        if isinstance(paradex_ohlcv, Exception) or isinstance(grvt_ohlcv, Exception):
+            return
+
+        paradex_map: dict[int, Decimal] = {}
+        for row in paradex_ohlcv:
+            if not isinstance(row, (list, tuple)) or len(row) < 5:
+                continue
+            ts_raw = row[0]
+            close_raw = row[4]
+            if not isinstance(ts_raw, (int, float)):
+                continue
+            close_price = _to_decimal(close_raw)
+            if close_price is None or close_price <= 0:
+                continue
+            paradex_map[int(ts_raw)] = close_price
+
+        grvt_map: dict[int, Decimal] = {}
+        for row in grvt_ohlcv:
+            if not isinstance(row, (list, tuple)) or len(row) < 5:
+                continue
+            ts_raw = row[0]
+            close_raw = row[4]
+            if not isinstance(ts_raw, (int, float)):
+                continue
+            close_price = _to_decimal(close_raw)
+            if close_price is None or close_price <= 0:
+                continue
+            grvt_map[int(ts_raw)] = close_price
+
+        aligned_ts = sorted(set(paradex_map.keys()) & set(grvt_map.keys()))
+        if not aligned_ts:
+            return
+
+        for ts_ms in aligned_ts:
+            paradex_close = paradex_map[ts_ms]
+            grvt_close = grvt_map[ts_ms]
+            reference_mid = (paradex_close + grvt_close) / Decimal("2")
+            if reference_mid <= 0:
+                continue
+            signed_edge_bps = ((grvt_close - paradex_close) / reference_mid) * Decimal("10000")
+            edge_pct = signed_edge_bps / Decimal("100")
+            ts_iso = datetime.fromtimestamp(ts_ms / 1000, tz=timezone.utc).isoformat()
+            self._append_market_history_point(
+                symbol=symbol,
+                signed_edge_bps=signed_edge_bps,
+                tradable_edge_pct=edge_pct,
+                ts=ts_iso,
+                source="ohlcv_backfill",
+            )
 
     async def _fetch_pair_row(
         self,
@@ -468,6 +836,20 @@ class NominalSpreadScanner:
         reference_mid = (paradex_mid + grvt_mid) / Decimal("2")
         symbol = f"{base_asset}-PERP"
 
+        edge_para_to_grvt_bps = Decimal("0")
+        edge_grvt_to_para_bps = Decimal("0")
+        if reference_mid > 0:
+            edge_para_to_grvt_bps = ((grvt_bid - paradex_ask) / reference_mid) * Decimal("10000")
+            edge_grvt_to_para_bps = ((paradex_bid - grvt_ask) / reference_mid) * Decimal("10000")
+        signed_edge_bps = edge_para_to_grvt_bps if edge_para_to_grvt_bps >= edge_grvt_to_para_bps else -edge_grvt_to_para_bps
+        self._append_market_history_point(
+            symbol=symbol,
+            signed_edge_bps=signed_edge_bps,
+            tradable_edge_pct=(signed_edge_bps / Decimal("100")),
+            source="scanner",
+        )
+        zscore, zscore_status, history_samples = self._compute_zscore(symbol)
+
         # 口径对齐执行引擎：Paradex taker + GRVT maker。
         edge_sell_paradex_buy_grvt = paradex_bid - grvt_bid
         edge_buy_paradex_sell_grvt = grvt_ask - paradex_ask
@@ -486,13 +868,6 @@ class NominalSpreadScanner:
         if reference_mid > 0:
             tradable_edge_bps = (tradable_edge_price / reference_mid) * Decimal("10000")
         tradable_edge_pct = tradable_edge_bps / Decimal("100")
-        edge_para_to_grvt_bps = Decimal("0")
-        edge_grvt_to_para_bps = Decimal("0")
-        if reference_mid > 0:
-            edge_para_to_grvt_bps = ((grvt_bid - paradex_ask) / reference_mid) * Decimal("10000")
-            edge_grvt_to_para_bps = ((paradex_bid - grvt_ask) / reference_mid) * Decimal("10000")
-        signed_edge_bps = edge_para_to_grvt_bps if edge_para_to_grvt_bps >= edge_grvt_to_para_bps else -edge_grvt_to_para_bps
-        zscore = self._compute_zscore(symbol, signed_edge_bps)
         spread_speed_pct_per_min, spread_volatility_pct, speed_samples = self._compute_spread_speed_metrics(
             symbol=symbol,
             edge_pct=tradable_edge_pct,
@@ -542,6 +917,10 @@ class NominalSpreadScanner:
                     "grvt": grvt_fee_source,
                 },
                 "zscore": float(zscore),
+                "zscore_ready": zscore_status == ZSCORE_STATUS_READY,
+                "zscore_status": zscore_status,
+                "history_samples": history_samples,
+                "required_samples": self._warmup_required_samples,
                 "spread_speed_pct_per_min": float(spread_speed_pct_per_min),
                 "spread_volatility_pct": float(spread_volatility_pct),
                 "speed_samples": speed_samples,

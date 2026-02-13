@@ -210,6 +210,28 @@ function pickNumber(record: Record<string, unknown>, keys: string[], fallback: n
   return fallback;
 }
 
+function pickBoolean(record: Record<string, unknown>, keys: string[], fallback: boolean): boolean {
+  for (const key of keys) {
+    const value = record[key];
+    if (typeof value === "boolean") {
+      return value;
+    }
+    if (typeof value === "number" && Number.isFinite(value)) {
+      return value > 0;
+    }
+    if (typeof value === "string") {
+      const normalized = value.trim().toLowerCase();
+      if (["true", "1", "yes", "on", "ready"].includes(normalized)) {
+        return true;
+      }
+      if (["false", "0", "no", "off", "pending"].includes(normalized)) {
+        return false;
+      }
+    }
+  }
+  return fallback;
+}
+
 function parseEngineStatus(value: string): EngineStatus {
   const normalized = value.toLowerCase();
   if (normalized === "running") return "running";
@@ -602,6 +624,12 @@ function normalizeMarketSpreadRow(data: unknown): MarketTopSpreadRow | null {
     feeCostEstimate: pickNumber(record, ["fee_cost_estimate", "feeCostEstimate"], 0),
     netNominalSpread: pickNumber(record, ["net_nominal_spread", "netNominalSpread"], 0),
     zscore: pickNumber(record, ["zscore", "z_score", "zScore"], 0),
+    zscoreReady:
+      pickBoolean(record, ["zscore_ready", "zscoreReady"], false) ||
+      pickString(record, ["zscore_status", "zscoreStatus"], "") === "ready",
+    zscoreStatus: pickString(record, ["zscore_status", "zscoreStatus"], ""),
+    historySamples: Math.max(0, pickNumber(record, ["history_samples", "historySamples"], 0)),
+    requiredSamples: Math.max(1, pickNumber(record, ["required_samples", "requiredSamples"], 1)),
     spreadSpeedPctPerMin: pickNumber(record, ["spread_speed_pct_per_min", "spreadSpeedPctPerMin"], 0),
     spreadVolatilityPct: pickNumber(record, ["spread_volatility_pct", "spreadVolatilityPct"], 0),
     speedSamples: Math.max(0, pickNumber(record, ["speed_samples", "speedSamples"], 0)),
@@ -629,6 +657,17 @@ export function normalizeMarketTopSpreads(data: unknown): MarketTopSpreadsRespon
     skippedReasons: {},
     feeProfile: { paradexLeg: "taker", grvtLeg: "maker" },
     lastError: null,
+    warmupDone: true,
+    warmupProgress: {
+      done: true,
+      message: "",
+      requiredSamples: 0,
+      symbolsTotal: 0,
+      symbolsReady: 0,
+      symbolsPending: 0,
+      sampleCounts: {},
+      updatedAt: ""
+    },
     rows: []
   };
 
@@ -666,6 +705,15 @@ export function normalizeMarketTopSpreads(data: unknown): MarketTopSpreadsRespon
   const paradexLegRaw = pickString(feeProfileRecord ?? {}, ["paradex_leg", "paradexLeg"], "taker");
   const grvtLegRaw = pickString(feeProfileRecord ?? {}, ["grvt_leg", "grvtLeg"], "maker");
   const lastErrorRaw = record.last_error ?? record.lastError;
+  const warmupProgressRecord = toRecord(record.warmup_progress) ?? toRecord(record.warmupProgress) ?? {};
+  const sampleCountsRecord = toRecord(warmupProgressRecord.sample_counts) ?? toRecord(warmupProgressRecord.sampleCounts) ?? {};
+  const normalizedSampleCounts: Record<string, number> = {};
+  for (const [symbol, sampleValue] of Object.entries(sampleCountsRecord)) {
+    const parsed = typeof sampleValue === "number" ? sampleValue : Number(sampleValue);
+    if (Number.isFinite(parsed) && parsed >= 0) {
+      normalizedSampleCounts[symbol] = parsed;
+    }
+  }
 
   return {
     updatedAt: pickString(record, ["updated_at", "updatedAt"], fallback.updatedAt),
@@ -683,6 +731,17 @@ export function normalizeMarketTopSpreads(data: unknown): MarketTopSpreadsRespon
       grvtLeg: grvtLegRaw === "taker" ? "taker" : "maker"
     },
     lastError: typeof lastErrorRaw === "string" && lastErrorRaw.trim() ? lastErrorRaw : null,
+    warmupDone: pickBoolean(record, ["warmup_done", "warmupDone"], true),
+    warmupProgress: {
+      done: pickBoolean(warmupProgressRecord, ["done"], true),
+      message: pickString(warmupProgressRecord, ["message"], ""),
+      requiredSamples: Math.max(0, pickNumber(warmupProgressRecord, ["required_samples", "requiredSamples"], 0)),
+      symbolsTotal: Math.max(0, pickNumber(warmupProgressRecord, ["symbols_total", "symbolsTotal"], 0)),
+      symbolsReady: Math.max(0, pickNumber(warmupProgressRecord, ["symbols_ready", "symbolsReady"], 0)),
+      symbolsPending: Math.max(0, pickNumber(warmupProgressRecord, ["symbols_pending", "symbolsPending"], 0)),
+      sampleCounts: normalizedSampleCounts,
+      updatedAt: pickString(warmupProgressRecord, ["updated_at", "updatedAt"], "")
+    },
     rows
   };
 }
@@ -706,6 +765,12 @@ function normalizeTradeTopCandidate(data: unknown): TradeTopCandidate | null {
     tradableEdgeBps: pickNumber(record, ["tradable_edge_bps", "tradableEdgeBps"], 0),
     grossNominalSpread: pickNumber(record, ["gross_nominal_spread", "grossNominalSpread"], 0),
     zscore: pickNumber(record, ["zscore", "z_score", "zScore"], 0),
+    zscoreReady:
+      pickBoolean(record, ["zscore_ready", "zscoreReady"], false) ||
+      pickString(record, ["zscore_status", "zscoreStatus"], "") === "ready",
+    zscoreStatus: pickString(record, ["zscore_status", "zscoreStatus"], ""),
+    historySamples: Math.max(0, pickNumber(record, ["history_samples", "historySamples"], 0)),
+    requiredSamples: Math.max(1, pickNumber(record, ["required_samples", "requiredSamples"], 1)),
     spreadSpeedPctPerMin: pickNumber(record, ["spread_speed_pct_per_min", "spreadSpeedPctPerMin"], 0),
     spreadVolatilityPct: pickNumber(record, ["spread_volatility_pct", "spreadVolatilityPct"], 0)
   };

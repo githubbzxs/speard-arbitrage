@@ -80,7 +80,27 @@ def create_app(config: AppConfig) -> FastAPI:
     top10_updated_at = ""
     market_ws_queues: set[asyncio.Queue[dict[str, Any]]] = set()
     market_top_push_task: asyncio.Task[None] | None = None
+    market_warmup_task: asyncio.Task[None] | None = None
     market_top_push_stop = asyncio.Event()
+
+    def is_market_warmup_required() -> bool:
+        return bool(config.market_warmup.enabled and config.market_warmup.require_ready_for_market_api)
+
+    def market_warmup_message() -> str:
+        status = market_scanner.get_warmup_status()
+        symbols_total = int(status.get("symbols_total", 0))
+        symbols_ready = int(status.get("symbols_ready", 0))
+        required_samples = int(status.get("required_samples", config.strategy.min_samples))
+        if symbols_total <= 0:
+            return "市场数据预热中：正在拉取可比币对"
+        return f"市场数据预热中：{symbols_ready}/{symbols_total} 个币对达到 {required_samples} 样本"
+
+    def assert_market_warmup_ready() -> None:
+        if not is_market_warmup_required():
+            return
+        if market_scanner.is_warmup_ready():
+            return
+        raise HTTPException(status_code=503, detail=market_warmup_message())
 
     def hydrate_runtime_credentials_from_saved() -> None:
         """将已保存凭证同步到运行时配置，供行情扫描等只读场景使用。"""
@@ -157,6 +177,10 @@ def create_app(config: AppConfig) -> FastAPI:
                     "tradable_edge_bps": parse_float(raw_row.get("tradable_edge_bps")),
                     "gross_nominal_spread": parse_float(raw_row.get("gross_nominal_spread")),
                     "zscore": parse_float(raw_row.get("zscore")),
+                    "zscore_ready": bool(raw_row.get("zscore_ready", False)),
+                    "zscore_status": str(raw_row.get("zscore_status") or ""),
+                    "history_samples": int(parse_float(raw_row.get("history_samples"))),
+                    "required_samples": int(parse_float(raw_row.get("required_samples"))),
                     "spread_speed_pct_per_min": parse_float(raw_row.get("spread_speed_pct_per_min")),
                     "spread_volatility_pct": parse_float(raw_row.get("spread_volatility_pct")),
                 }
@@ -182,6 +206,10 @@ def create_app(config: AppConfig) -> FastAPI:
         timeout_sec: float | None = None,
     ) -> dict[str, Any]:
         hydrate_runtime_credentials_from_saved()
+        if is_market_warmup_required() and not market_scanner.is_warmup_ready():
+            payload = market_scanner.build_warmup_payload(limit=candidate_limit)
+            apply_top10_payload(payload, reconcile_selected=False)
+            return payload
         fetch_coro = market_scanner.get_spreads(limit=candidate_limit, force_refresh=force_refresh)
         if timeout_sec is not None and timeout_sec > 0:
             payload = await asyncio.wait_for(fetch_coro, timeout=timeout_sec)
@@ -189,6 +217,27 @@ def create_app(config: AppConfig) -> FastAPI:
             payload = await fetch_coro
         apply_top10_payload(payload, reconcile_selected=reconcile_selected)
         return payload
+
+    async def market_warmup_worker() -> None:
+        poll_sec = max(0.05, config.market_warmup.scan_interval_ms / 1000)
+        while not market_top_push_stop.is_set():
+            if market_scanner.is_warmup_ready():
+                return
+            try:
+                hydrate_runtime_credentials_from_saved()
+                await market_scanner.warmup_until_ready(
+                    timeout_sec=max(1.0, poll_sec * 4),
+                    poll_sec=poll_sec,
+                )
+            except Exception:
+                # 预热过程允许失败重试，避免启动阶段单次网络异常导致卡死。
+                pass
+            if market_scanner.is_warmup_ready():
+                return
+            try:
+                await asyncio.wait_for(market_top_push_stop.wait(), timeout=poll_sec)
+            except asyncio.TimeoutError:
+                continue
 
     def register_market_ws_queue() -> asyncio.Queue[dict[str, Any]]:
         queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue(maxsize=1)
@@ -249,23 +298,35 @@ def create_app(config: AppConfig) -> FastAPI:
 
     @app.on_event("startup")
     async def on_startup() -> None:
-        nonlocal market_top_push_task
+        nonlocal market_top_push_task, market_warmup_task
 
         if config.web.log_level:
             pass
 
         market_top_push_stop.clear()
+        if config.market_warmup.enabled:
+            hydrate_runtime_credentials_from_saved()
+            await market_scanner.warmup_until_ready(
+                timeout_sec=config.market_warmup.timeout_sec,
+                poll_sec=max(0.05, config.market_warmup.scan_interval_ms / 1000),
+            )
+            if not market_scanner.is_warmup_ready():
+                market_warmup_task = asyncio.create_task(market_warmup_worker(), name="market-warmup-worker")
         market_top_push_task = asyncio.create_task(market_top_spreads_worker(), name="market-top-spreads-worker")
 
     @app.on_event("shutdown")
     async def on_shutdown() -> None:
-        nonlocal market_top_push_task
+        nonlocal market_top_push_task, market_warmup_task
 
         market_top_push_stop.set()
         if market_top_push_task is not None:
             market_top_push_task.cancel()
             await asyncio.gather(market_top_push_task, return_exceptions=True)
             market_top_push_task = None
+        if market_warmup_task is not None:
+            market_warmup_task.cancel()
+            await asyncio.gather(market_warmup_task, return_exceptions=True)
+            market_warmup_task = None
 
         try:
             await orchestrator.shutdown()
@@ -293,6 +354,7 @@ def create_app(config: AppConfig) -> FastAPI:
         limit: int = 0,
         force_refresh: bool = False,
     ) -> dict[str, Any]:
+        assert_market_warmup_ready()
         hydrate_runtime_credentials_from_saved()
         payload = await market_scanner.get_spreads(
             limit=limit,
@@ -306,6 +368,7 @@ def create_app(config: AppConfig) -> FastAPI:
         limit: int = 0,
         force_refresh: bool = False,
     ) -> dict[str, Any]:
+        assert_market_warmup_ready()
         hydrate_runtime_credentials_from_saved()
         payload = await market_scanner.get_spreads(
             limit=limit,
@@ -314,8 +377,18 @@ def create_app(config: AppConfig) -> FastAPI:
         apply_top10_payload(payload, reconcile_selected=False)
         return payload
 
+    @app.get("/api/market/warmup-status")
+    async def get_market_warmup_status() -> dict[str, Any]:
+        status = market_scanner.get_warmup_status()
+        return {
+            "warmup_done": status.get("done", False),
+            "warmup_progress": status,
+            "message": status.get("message", ""),
+        }
+
     @app.get("/api/trade/selection")
     async def get_trade_selection(force_refresh: bool = False) -> dict[str, Any]:
+        assert_market_warmup_ready()
         if not force_refresh and top10_candidates:
             return {
                 "selected_symbol": selected_symbol,
@@ -343,6 +416,7 @@ def create_app(config: AppConfig) -> FastAPI:
     @app.post("/api/trade/selection", response_model=ActionResponse)
     async def set_trade_selection(payload: TradeSelectionRequest) -> ActionResponse:
         nonlocal selected_symbol, selected_symbol_config
+        assert_market_warmup_ready()
 
         if orchestrator.engine_status != EngineStatus.STOPPED:
             return ActionResponse(
@@ -533,6 +607,8 @@ def create_app(config: AppConfig) -> FastAPI:
                     "skipped_reasons": {},
                     "fee_profile": {"paradex_leg": "taker", "grvt_leg": "maker"},
                     "last_error": "候选列表初始化较慢，后台加载中",
+                    "warmup_done": market_scanner.is_warmup_ready(),
+                    "warmup_progress": market_scanner.get_warmup_status(),
                     "rows": [],
                 }
             await ws.send_json({"type": "market_top_spreads", "data": initial_market_payload})

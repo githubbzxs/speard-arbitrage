@@ -29,6 +29,17 @@ const EMPTY_RESULT: MarketTopSpreadsResponse = {
     grvtLeg: "maker"
   },
   lastError: null,
+  warmupDone: true,
+  warmupProgress: {
+    done: true,
+    message: "",
+    requiredSamples: 0,
+    symbolsTotal: 0,
+    symbolsReady: 0,
+    symbolsPending: 0,
+    sampleCounts: {},
+    updatedAt: ""
+  },
   rows: []
 };
 
@@ -228,7 +239,7 @@ export default function MarketPage() {
                       <strong>{formatSigned(row.tradableEdgePct, 4)}%</strong>
                     </td>
                     <td data-label="Z-score">
-                      <strong>{formatSigned(row.zscore, 3)}</strong>
+                      <strong>{row.zscoreReady ? formatSigned(row.zscore, 3) : "--"}</strong>
                     </td>
                     <td data-label="有效杠杆">
                       <strong>{formatNumber(row.effectiveLeverage, 2)}x</strong>

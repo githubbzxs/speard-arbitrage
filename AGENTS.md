@@ -237,6 +237,11 @@
   - Impact：`web/ui/src/styles.css`。
   - Verify：`cd web/ui && npm run build`，并确认 `/trade` 中“当前行情(单表)”与“策略控制”上下堆叠显示。
 
+- [2026-02-13] z-score 历史改为扫描器独立库并新增启动预热门禁
+  - Why：`symbol_snapshots` 历史覆盖不足会导致部分币对长期 `zscore=0`，需改为“按币对持续积累历史 + 缺口自动补齐”。
+  - Impact：`backend/arbbot/market/scanner.py`、`backend/arbbot/storage/repository.py`、`backend/arbbot/web/api.py`、`backend/arbbot/config.py`、`.env.example`、`web/ui/src/types.ts`、`web/ui/src/api/client.ts`、`web/ui/src/pages/TradePage.tsx`、`web/ui/src/pages/MarketPage.tsx`、`backend/tests/test_api_market_warmup.py`、`backend/tests/test_repository_market_history.py`、`backend/tests/test_market_scanner_zscore.py`。
+  - Verify：`python -m pytest backend/tests`、`cd web/ui && npm run build`，并确认 `GET /api/market/top-spreads` 返回 `warmup_done/warmup_progress`，且 `zscore_ready=false` 时前端显示 `--`。
+
 ## Commands
 - 后端测试：`python -m pytest backend/tests`
 - 后端启动：`python backend/main.py`

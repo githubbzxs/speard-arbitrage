@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import sqlite3
 import time
 from decimal import Decimal
@@ -65,26 +64,44 @@ def test_compute_zscore_reads_history_from_repository(tmp_path: Path) -> None:
     try:
         conn.execute(
             """
-            CREATE TABLE IF NOT EXISTS symbol_snapshots (
+            CREATE TABLE IF NOT EXISTS market_spread_history (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 ts TEXT NOT NULL,
                 symbol TEXT NOT NULL,
-                data_json TEXT NOT NULL
+                signed_edge_bps TEXT NOT NULL,
+                tradable_edge_pct TEXT NOT NULL,
+                source TEXT NOT NULL DEFAULT 'scanner'
             )
             """
         )
         for idx in range(80):
-            payload = {"symbol": "BTC-PERP", "spread_bps": 10 + (idx % 5)}
             conn.execute(
-                "INSERT INTO symbol_snapshots (ts, symbol, data_json) VALUES (?, ?, ?)",
-                (f"2026-02-13T00:00:{idx:02d}+00:00", "BTC-PERP", json.dumps(payload)),
+                """
+                INSERT INTO market_spread_history (ts, symbol, signed_edge_bps, tradable_edge_pct, source)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (
+                    f"2026-02-13T00:00:{idx:02d}+00:00",
+                    "BTC-PERP",
+                    str(10 + (idx % 5)),
+                    str((10 + (idx % 5)) / 100),
+                    "unit_seed",
+                ),
             )
         conn.commit()
     finally:
         conn.close()
 
     scanner = NominalSpreadScanner(config, scan_interval_sec=60)
-    zscore = scanner._compute_zscore("BTC-PERP", Decimal("25"))  # type: ignore[attr-defined]
+    scanner._append_market_history_point(  # type: ignore[attr-defined]
+        symbol="BTC-PERP",
+        signed_edge_bps=Decimal("25"),
+        tradable_edge_pct=Decimal("0.25"),
+        source="unit_test",
+    )
+    zscore, zscore_status, sample_count = scanner._compute_zscore("BTC-PERP")  # type: ignore[attr-defined]
+    assert zscore_status == "ready"
+    assert sample_count >= 60
     assert abs(float(zscore)) > 0
 
 

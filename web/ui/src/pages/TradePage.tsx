@@ -32,6 +32,17 @@ const EMPTY_MARKET_RESULT: MarketTopSpreadsResponse = {
     grvtLeg: "maker"
   },
   lastError: null,
+  warmupDone: true,
+  warmupProgress: {
+    done: true,
+    message: "",
+    requiredSamples: 0,
+    symbolsTotal: 0,
+    symbolsReady: 0,
+    symbolsPending: 0,
+    sampleCounts: {},
+    updatedAt: ""
+  },
   rows: []
 };
 
@@ -250,11 +261,20 @@ export default function TradePage() {
     if (marketLoading) {
       return "行情加载中...";
     }
+    if (!marketResult.warmupDone) {
+      return `历史预热中：${marketResult.warmupProgress.symbolsReady}/${marketResult.warmupProgress.symbolsTotal}`;
+    }
     if (topRows.length === 0) {
       return "当前无可执行行情数据";
     }
     return `当前展示全量可比币对 ${topRows.length} 个`;
-  }, [marketLoading, topRows.length]);
+  }, [
+    marketLoading,
+    marketResult.warmupDone,
+    marketResult.warmupProgress.symbolsReady,
+    marketResult.warmupProgress.symbolsTotal,
+    topRows.length,
+  ]);
 
   const onModeSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -349,6 +369,9 @@ export default function TradePage() {
     <div className="page-grid trade-page-grid">
       {errorMessage ? <div className="banner banner-error">{errorMessage}</div> : null}
       {marketError ? <div className="banner banner-error">{marketError}</div> : null}
+      {!marketResult.warmupDone ? (
+        <div className="banner banner-warning">{marketResult.warmupProgress.message || "市场历史预热中..."}</div>
+      ) : null}
       {actionMessage ? <div className="banner banner-success">{actionMessage}</div> : null}
       {selectionMessage ? <div className="banner banner-success">{selectionMessage}</div> : null}
       {marketResult.lastError ? <div className="banner banner-warning">{marketResult.lastError}</div> : null}
@@ -455,7 +478,7 @@ export default function TradePage() {
                           <strong>{formatSigned(row.tradableEdgePct, 4)}%</strong>
                         </td>
                         <td data-label="Z-score">
-                          <strong>{formatNumber(row.zscore, 3)}</strong>
+                          <strong>{row.zscoreReady ? formatNumber(row.zscore, 3) : "--"}</strong>
                         </td>
                         <td data-label="速度(%/分钟)">
                           <strong>{formatSigned(row.spreadSpeedPctPerMin, 4)}</strong>
@@ -552,7 +575,7 @@ export default function TradePage() {
               {selectedCandidate ? (
                 <p className="hint">
                   候选口径：{formatSigned(selectedCandidate.tradableEdgePct, 4)}%，Z-score{" "}
-                  {formatSigned(selectedCandidate.zscore, 3)}，速度{" "}
+                  {selectedCandidate.zscoreReady ? formatSigned(selectedCandidate.zscore, 3) : "--（预热中）"}，速度{" "}
                   {formatSigned(selectedCandidate.spreadSpeedPctPerMin, 4)}%/分钟，波动率{" "}
                   {formatNumber(selectedCandidate.spreadVolatilityPct, 4)}%
                 </p>
