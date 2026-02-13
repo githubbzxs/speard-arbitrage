@@ -475,8 +475,12 @@ export function normalizeCredentialsStatus(data: unknown): CredentialsStatus {
     return fallback;
   }
 
-  const paradexSource = record.paradex ?? record.paradex_status ?? record.paradexStatus;
-  const grvtSource = record.grvt ?? record.grvt_status ?? record.grvtStatus;
+  const nestedRecord = toRecord(record.data);
+  const sourceRecord = nestedRecord ?? record;
+
+  const paradexSource =
+    sourceRecord.paradex ?? sourceRecord.paradex_status ?? sourceRecord.paradexStatus;
+  const grvtSource = sourceRecord.grvt ?? sourceRecord.grvt_status ?? sourceRecord.grvtStatus;
 
   return {
     paradex: normalizeExchangeStatus(paradexSource, PARADEX_FIELDS),
