@@ -52,6 +52,11 @@
   - Impact：`backend/arbbot/config.py`、`.env.example`、`backend/tests/test_runtime_config.py`。
   - Verify：`python -m pytest backend/tests/test_runtime_config.py`，并确认 `GET /api/config` 中 `paradex_market` 为 `BTC/USD:USDC, ETH/USD:USDC`。
 
+- [2026-02-13] 兼容 GRVT 盘口返回的 dict 结构
+  - Why：GRVT SDK 的 `fetch_order_book` 返回层级可能为 `{"price": ...}`，旧逻辑按数组下标解析会吞异常并导致 `盘口不可用`。
+  - Impact：`backend/arbbot/exchanges/grvt_adapter.py`、`backend/tests/test_grvt_adapter_depth.py`。
+  - Verify：`python -m pytest backend/tests/test_grvt_adapter_depth.py`，并线上确认 `GET /api/symbols` 不再全为 0。
+
 ## Commands
 - 后端测试：`python -m pytest backend/tests`
 - 后端启动：`python backend/main.py`

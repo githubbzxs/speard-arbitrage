@@ -18,6 +18,15 @@ class FakeGrvtClient:
         }
 
 
+class FakeGrvtClientWithDictLevels(FakeGrvtClient):
+    async def fetch_order_book(self, market: str, limit: int | None = None) -> dict[str, list[dict[str, str]]]:
+        self.calls.append((market, limit))
+        return {
+            "bids": [{"price": "100.2", "size": "1.0"}],
+            "asks": [{"price": "100.8", "size": "1.4"}],
+        }
+
+
 def _build_adapter() -> GrvtAdapter:
     config = ExchangeConfig(
         name="grvt",
@@ -58,4 +67,18 @@ async def test_fetch_rest_bbo_uses_supported_grvt_depth_limit() -> None:
     assert bbo is not None
     assert bbo.bid == Decimal("100.0")
     assert bbo.ask == Decimal("101.0")
+    assert client.calls == [("BTC_USDT_Perp", GRVT_ORDERBOOK_LIMIT)]
+
+
+@pytest.mark.asyncio
+async def test_fetch_bbo_supports_dict_levels_from_grvt_sdk() -> None:
+    adapter = _build_adapter()
+    client = FakeGrvtClientWithDictLevels()
+    adapter._client = client
+
+    bbo = await adapter.fetch_bbo(_build_symbol())
+
+    assert bbo is not None
+    assert bbo.bid == Decimal("100.2")
+    assert bbo.ask == Decimal("100.8")
     assert client.calls == [("BTC_USDT_Perp", GRVT_ORDERBOOK_LIMIT)]

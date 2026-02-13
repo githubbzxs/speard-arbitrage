@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import random
 import uuid
+from collections.abc import Sequence
 from decimal import Decimal
 
 from ..config import ExchangeConfig, SymbolConfig
@@ -83,13 +84,13 @@ class GrvtAdapter(BaseExchangeAdapter):
         try:
             # GRVT depth 参数不接受 5，使用其支持的 10 以保证真实行情可用。
             depth = await self._client.fetch_order_book(symbol.grvt_market, limit=GRVT_ORDERBOOK_LIMIT)
-            bids = depth.get("bids", [])
-            asks = depth.get("asks", [])
-            if not bids or not asks:
+            bid = self._extract_top_price(depth.get("bids", []))
+            ask = self._extract_top_price(depth.get("asks", []))
+            if bid is None or ask is None:
                 return None
             bbo = BBO(
-                bid=Decimal(str(bids[0][0])),
-                ask=Decimal(str(asks[0][0])),
+                bid=bid,
+                ask=ask,
                 source="ws",
             )
             await self.emit_orderbook(symbol.symbol, bbo)
@@ -106,13 +107,13 @@ class GrvtAdapter(BaseExchangeAdapter):
 
         try:
             depth = await self._client.fetch_order_book(symbol.grvt_market, limit=GRVT_ORDERBOOK_LIMIT)
-            bids = depth.get("bids", [])
-            asks = depth.get("asks", [])
-            if not bids or not asks:
+            bid = self._extract_top_price(depth.get("bids", []))
+            ask = self._extract_top_price(depth.get("asks", []))
+            if bid is None or ask is None:
                 return None
             return BBO(
-                bid=Decimal(str(bids[0][0])),
-                ask=Decimal(str(asks[0][0])),
+                bid=bid,
+                ask=ask,
                 source="rest",
             )
         except Exception:
@@ -248,6 +249,20 @@ class GrvtAdapter(BaseExchangeAdapter):
             ask += bias
 
         return BBO(bid=bid, ask=ask, source=source)
+
+    @staticmethod
+    def _extract_top_price(levels: object) -> Decimal | None:
+        if not isinstance(levels, list) or not levels:
+            return None
+        top = levels[0]
+        if isinstance(top, dict):
+            price = top.get("price")
+            if price is None:
+                return None
+            return Decimal(str(price))
+        if isinstance(top, Sequence) and not isinstance(top, (str, bytes)) and len(top) > 0:
+            return Decimal(str(top[0]))
+        return None
 
     @staticmethod
     def _infer_anchor_mid(symbol: str) -> Decimal:
