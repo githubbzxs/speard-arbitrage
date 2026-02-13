@@ -47,6 +47,11 @@
   - Impact：`backend/arbbot/exchanges/grvt_adapter.py`、`backend/tests/test_grvt_adapter_depth.py`。
   - Verify：`python -m pytest backend/tests/test_grvt_adapter_depth.py`，以及线上 `GET /api/status` 的 `ws_ok=true`。
 
+- [2026-02-13] 标准符号默认映射为交易所可用 market symbol
+  - Why：`BTC-PERP/ETH-PERP` 不是 Paradex ccxt 可用 symbol，会导致真实行情抓取失败。
+  - Impact：`backend/arbbot/config.py`、`.env.example`、`backend/tests/test_runtime_config.py`。
+  - Verify：`python -m pytest backend/tests/test_runtime_config.py`，并确认 `GET /api/config` 中 `paradex_market` 为 `BTC/USD:USDC, ETH/USD:USDC`。
+
 ## Commands
 - 后端测试：`python -m pytest backend/tests`
 - 后端启动：`python backend/main.py`

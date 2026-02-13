@@ -36,3 +36,14 @@ def test_runtime_config_new_flags_override_dry_run(monkeypatch) -> None:
     assert config.runtime.simulated_market_data is False
     assert config.runtime.live_order_enabled is True
     assert config.runtime.enable_order_confirmation_text == "CONFIRM-LIVE"
+
+
+def test_default_market_mapping_for_standard_symbols(monkeypatch) -> None:
+    monkeypatch.setenv("ARB_SYMBOLS", "BTC-PERP,ETH-PERP")
+    monkeypatch.delenv("PARADEX_MARKETS", raising=False)
+    monkeypatch.delenv("GRVT_MARKETS", raising=False)
+
+    config = AppConfig.from_env(env_path=None)
+
+    assert [item.paradex_market for item in config.symbols] == ["BTC/USD:USDC", "ETH/USD:USDC"]
+    assert [item.grvt_market for item in config.symbols] == ["BTC_USDT_Perp", "ETH_USDT_Perp"]

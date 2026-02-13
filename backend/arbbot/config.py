@@ -39,6 +39,24 @@ def _split_csv(raw: str | None, default: str) -> list[str]:
     return [part.strip() for part in value.split(",") if part.strip()]
 
 
+def _default_paradex_market(symbol: str) -> str:
+    normalized = symbol.upper()
+    if normalized == "BTC-PERP":
+        return "BTC/USD:USDC"
+    if normalized == "ETH-PERP":
+        return "ETH/USD:USDC"
+    return symbol
+
+
+def _default_grvt_market(symbol: str) -> str:
+    normalized = symbol.upper()
+    if normalized == "BTC-PERP":
+        return "BTC_USDT_Perp"
+    if normalized == "ETH-PERP":
+        return "ETH_USDT_Perp"
+    return symbol
+
+
 @dataclass(slots=True)
 class ExchangeCredentials:
     """交易所凭证。"""
@@ -153,13 +171,13 @@ class AppConfig:
             load_dotenv(env_path, override=False)
 
         symbols = _split_csv(os.getenv("ARB_SYMBOLS"), "BTC-PERP")
-        paradex_markets = _split_csv(os.getenv("PARADEX_MARKETS"), ",".join(symbols))
-        grvt_markets = _split_csv(os.getenv("GRVT_MARKETS"), ",".join(symbols))
+        paradex_markets = _split_csv(os.getenv("PARADEX_MARKETS"), "")
+        grvt_markets = _split_csv(os.getenv("GRVT_MARKETS"), "")
 
         symbol_cfgs: list[SymbolConfig] = []
         for idx, symbol in enumerate(symbols):
-            para_market = paradex_markets[idx] if idx < len(paradex_markets) else symbol
-            grvt_market = grvt_markets[idx] if idx < len(grvt_markets) else symbol
+            para_market = paradex_markets[idx] if idx < len(paradex_markets) else _default_paradex_market(symbol)
+            grvt_market = grvt_markets[idx] if idx < len(grvt_markets) else _default_grvt_market(symbol)
             symbol_cfgs.append(
                 SymbolConfig(
                     symbol=symbol,
