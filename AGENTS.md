@@ -42,6 +42,11 @@
   - Impact：`deploy/nginx.conf`、`deploy/arbbot.service`、`README.md`。
   - Verify：`curl -i http://127.0.0.1/api/status` 与页面实时数据加载。
 
+- [2026-02-13] 修复 GRVT 真实行情深度参数不兼容
+  - Why：`fetch_order_book(limit=5)` 在 GRVT 返回 `Depth is invalid`，导致 `ws_ok=false`、盘口不可用。
+  - Impact：`backend/arbbot/exchanges/grvt_adapter.py`、`backend/tests/test_grvt_adapter_depth.py`。
+  - Verify：`python -m pytest backend/tests/test_grvt_adapter_depth.py`，以及线上 `GET /api/status` 的 `ws_ok=true`。
+
 ## Commands
 - 后端测试：`python -m pytest backend/tests`
 - 后端启动：`python backend/main.py`

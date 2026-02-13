@@ -10,6 +10,8 @@ from ..config import ExchangeConfig, SymbolConfig
 from ..models import BBO, ExchangeName, OrderAck, OrderRequest, TradeSide
 from .base import BaseExchangeAdapter
 
+GRVT_ORDERBOOK_LIMIT = 10
+
 
 class GrvtAdapter(BaseExchangeAdapter):
     """GRVT 适配器，支持 dry-run 与实盘两种模式。"""
@@ -79,7 +81,8 @@ class GrvtAdapter(BaseExchangeAdapter):
             return None
 
         try:
-            depth = await self._client.fetch_order_book(symbol.grvt_market, limit=5)
+            # GRVT depth 参数不接受 5，使用其支持的 10 以保证真实行情可用。
+            depth = await self._client.fetch_order_book(symbol.grvt_market, limit=GRVT_ORDERBOOK_LIMIT)
             bids = depth.get("bids", [])
             asks = depth.get("asks", [])
             if not bids or not asks:
@@ -102,7 +105,7 @@ class GrvtAdapter(BaseExchangeAdapter):
             return None
 
         try:
-            depth = await self._client.fetch_order_book(symbol.grvt_market, limit=5)
+            depth = await self._client.fetch_order_book(symbol.grvt_market, limit=GRVT_ORDERBOOK_LIMIT)
             bids = depth.get("bids", [])
             asks = depth.get("asks", [])
             if not bids or not asks:
