@@ -1,9 +1,16 @@
-﻿import { useEffect, useMemo, useState } from "react";
+﻿import { useCallback, useEffect, useMemo, useState } from "react";
 import type { FormEvent } from "react";
 
+import { apiClient, getErrorMessage } from "../api/client";
 import { useDashboard } from "../hooks/useDashboard";
-import type { SymbolParamsPayload, TradingMode } from "../types";
+import type { SymbolParamsPayload, TradeSelection, TradingMode } from "../types";
 import { formatNumber, formatPrice, formatSigned, formatTimestamp } from "../utils/format";
+
+const EMPTY_TRADE_SELECTION: TradeSelection = {
+  selectedSymbol: "",
+  top10Candidates: [],
+  updatedAt: ""
+};
 
 function parseOptionalNumber(value: string): number | undefined {
   const trimmed = value.trim();
@@ -81,23 +88,60 @@ export default function TradePage() {
   const [zExit, setZExit] = useState("");
   const [maxPosition, setMaxPosition] = useState("");
   const [formError, setFormError] = useState("");
+  const [selectionMessage, setSelectionMessage] = useState("");
+  const [selectionLoading, setSelectionLoading] = useState(false);
+  const [selectionSaving, setSelectionSaving] = useState(false);
+  const [tradeSelection, setTradeSelection] = useState<TradeSelection>(EMPTY_TRADE_SELECTION);
 
   useEffect(() => {
     setModeDraft(status.mode);
   }, [status.mode]);
 
+  const loadTradeSelection = useCallback(async (forceRefresh: boolean) => {
+    setSelectionLoading(true);
+    try {
+      const response = await apiClient.getTradeSelection({ forceRefresh });
+      setTradeSelection(response);
+      setSelectionMessage("");
+      setFormError("");
+    } catch (error) {
+      setFormError(`加载 Top10 交易候选失败：${getErrorMessage(error)}`);
+    } finally {
+      setSelectionLoading(false);
+    }
+  }, []);
+
   useEffect(() => {
-    if (selectedSymbol && symbols.some((item) => item.symbol === selectedSymbol)) {
+    void loadTradeSelection(false);
+  }, [loadTradeSelection]);
+
+  useEffect(() => {
+    if (tradeSelection.selectedSymbol) {
+      setSelectedSymbol(tradeSelection.selectedSymbol);
       return;
     }
-    if (symbols.length > 0) {
-      setSelectedSymbol(symbols[0].symbol);
+    if (tradeSelection.top10Candidates.length > 0) {
+      setSelectedSymbol((previous) => {
+        if (previous && tradeSelection.top10Candidates.some((item) => item.symbol === previous)) {
+          return previous;
+        }
+        return tradeSelection.top10Candidates[0].symbol;
+      });
+      return;
     }
-  }, [selectedSymbol, symbols]);
+    setSelectedSymbol("");
+  }, [tradeSelection.selectedSymbol, tradeSelection.top10Candidates]);
+
+  const selectedTradeSymbol = tradeSelection.selectedSymbol || selectedSymbol;
 
   const selectedSymbolInfo = useMemo(
-    () => symbols.find((item) => item.symbol === selectedSymbol) ?? null,
-    [selectedSymbol, symbols]
+    () => symbols.find((item) => item.symbol === selectedTradeSymbol) ?? null,
+    [selectedTradeSymbol, symbols]
+  );
+
+  const selectedCandidate = useMemo(
+    () => tradeSelection.top10Candidates.find((item) => item.symbol === selectedTradeSymbol) ?? null,
+    [selectedTradeSymbol, tradeSelection.top10Candidates]
   );
 
   const totalRiskCount = useMemo(
@@ -110,11 +154,36 @@ export default function TradePage() {
     await changeMode(modeDraft);
   };
 
+  const onTradeSymbolChange = async (symbol: string) => {
+    setSelectedSymbol(symbol);
+    setSelectionMessage("");
+    setFormError("");
+
+    if (!symbol.trim()) {
+      return;
+    }
+
+    setSelectionSaving(true);
+    try {
+      const result = await apiClient.setTradeSelection(symbol, { forceRefresh: true });
+      if (!result.ok) {
+        throw new Error(result.message || "设置交易标的失败");
+      }
+      setSelectionMessage(result.message || `已切换交易标的：${symbol}`);
+      await loadTradeSelection(true);
+      await refresh();
+    } catch (error) {
+      setFormError(`设置交易标的失败：${getErrorMessage(error)}`);
+    } finally {
+      setSelectionSaving(false);
+    }
+  };
+
   const onParamsSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
 
-    if (!selectedSymbol.trim()) {
-      setFormError("请先选择交易对");
+    if (!selectedTradeSymbol.trim()) {
+      setFormError("请先在 Top10 候选中选择交易标的");
       return;
     }
 
@@ -152,22 +221,23 @@ export default function TradePage() {
     }
 
     setFormError("");
-    await updateSymbolParams(selectedSymbol, payload);
+    await updateSymbolParams(selectedTradeSymbol, payload);
   };
 
   const onFlattenClick = async () => {
-    if (!selectedSymbol.trim()) {
-      setFormError("请先选择交易对");
+    if (!selectedTradeSymbol.trim()) {
+      setFormError("请先在 Top10 候选中选择交易标的");
       return;
     }
     setFormError("");
-    await flattenSymbol(selectedSymbol);
+    await flattenSymbol(selectedTradeSymbol);
   };
 
   return (
     <div className="page-grid">
       {errorMessage ? <div className="banner banner-error">{errorMessage}</div> : null}
       {actionMessage ? <div className="banner banner-success">{actionMessage}</div> : null}
+      {selectionMessage ? <div className="banner banner-success">{selectionMessage}</div> : null}
 
       <section className="panel overview-panel">
         <div className="panel-title">
@@ -203,17 +273,65 @@ export default function TradePage() {
       <section className="panel control-panel page-panel">
         <div className="panel-title">
           <h2>策略控制</h2>
-          <small>{isBusy ? "命令执行中..." : "可操作"}</small>
+          <small>{isBusy || selectionSaving ? "命令执行中..." : "可操作"}</small>
+        </div>
+
+        <div className="form-block">
+          <label htmlFor="trade-symbol-select">交易标的（仅 Top10 候选）</label>
+          <div className="inline-form">
+            <select
+              id="trade-symbol-select"
+              value={selectedSymbol}
+              onChange={(event) => void onTradeSymbolChange(event.target.value)}
+              disabled={isBusy || selectionSaving || selectionLoading}
+            >
+              {tradeSelection.top10Candidates.length === 0 ? (
+                <option value="">暂无 Top10 候选（先去行情页刷新）</option>
+              ) : (
+                tradeSelection.top10Candidates.map((item) => (
+                  <option key={item.symbol} value={item.symbol}>
+                    {item.symbol}
+                  </option>
+                ))
+              )}
+            </select>
+            <button
+              className="btn btn-ghost"
+              type="button"
+              onClick={() => void loadTradeSelection(true)}
+              disabled={isBusy || selectionSaving || selectionLoading}
+            >
+              {selectionLoading ? "刷新中..." : "刷新 Top10"}
+            </button>
+          </div>
+
+          <p className="hint">
+            当前交易标的：{selectedTradeSymbol || "未选择"}，Top10 候选 {tradeSelection.top10Candidates.length} 个，
+            更新时间 {formatTimestamp(tradeSelection.updatedAt)}。
+          </p>
+          {selectedCandidate ? (
+            <p className="hint">
+              候选口径：{formatSigned(selectedCandidate.tradableEdgePct, 4)}% / {formatSigned(selectedCandidate.tradableEdgeBps, 2)} bps。
+            </p>
+          ) : null}
         </div>
 
         <div className="action-row action-row-3">
-          <button className="btn btn-primary" onClick={() => void startEngine()} disabled={isBusy}>
+          <button
+            className="btn btn-primary"
+            onClick={() => void startEngine()}
+            disabled={isBusy || selectionSaving || !tradeSelection.selectedSymbol}
+          >
             启动引擎
           </button>
-          <button className="btn btn-danger" onClick={() => void stopEngine()} disabled={isBusy}>
+          <button className="btn btn-danger" onClick={() => void stopEngine()} disabled={isBusy || selectionSaving}>
             停止引擎
           </button>
-          <button className="btn btn-ghost" onClick={() => void refresh()} disabled={isBusy || loading}>
+          <button
+            className="btn btn-ghost"
+            onClick={() => void refresh()}
+            disabled={isBusy || selectionSaving || loading}
+          >
             手动刷新
           </button>
         </div>
@@ -225,36 +343,18 @@ export default function TradePage() {
               id="mode-select"
               value={modeDraft}
               onChange={(event) => setModeDraft(event.target.value as TradingMode)}
-              disabled={isBusy}
+              disabled={isBusy || selectionSaving}
             >
               <option value="normal_arb">normal_arb</option>
               <option value="zero_wear">zero_wear</option>
             </select>
-            <button className="btn btn-secondary" type="submit" disabled={isBusy}>
+            <button className="btn btn-secondary" type="submit" disabled={isBusy || selectionSaving}>
               应用模式
             </button>
           </div>
         </form>
 
         <form className="form-block" onSubmit={onParamsSubmit}>
-          <label htmlFor="symbol-select">目标交易对</label>
-          <select
-            id="symbol-select"
-            value={selectedSymbol}
-            onChange={(event) => setSelectedSymbol(event.target.value)}
-            disabled={isBusy}
-          >
-            {symbols.length === 0 ? (
-              <option value="">暂无交易对</option>
-            ) : (
-              symbols.map((item) => (
-                <option key={item.symbol} value={item.symbol}>
-                  {item.symbol}
-                </option>
-              ))
-            )}
-          </select>
-
           <div className="param-grid">
             <div>
               <label htmlFor="z-entry">z_entry</label>
@@ -287,19 +387,27 @@ export default function TradePage() {
 
           {selectedSymbolInfo ? (
             <p className="hint">
-              {selectedSymbolInfo.symbol}：Paradex {formatPrice(selectedSymbolInfo.paradexBid)} / {formatPrice(selectedSymbolInfo.paradexAsk)}，GRVT {formatPrice(selectedSymbolInfo.grvtBid)} / {formatPrice(selectedSymbolInfo.grvtAsk)}，spread {formatSigned(selectedSymbolInfo.spreadPrice, 4)}，zscore {formatNumber(selectedSymbolInfo.zscore, 3)}。
+              {selectedSymbolInfo.symbol}：Paradex {formatPrice(selectedSymbolInfo.paradexBid)} / {formatPrice(selectedSymbolInfo.paradexAsk)}，
+              GRVT {formatPrice(selectedSymbolInfo.grvtBid)} / {formatPrice(selectedSymbolInfo.grvtAsk)}，
+              spread {formatSigned(selectedSymbolInfo.spreadPrice, 4)}（{formatSigned(selectedSymbolInfo.spreadBps / 100, 4)}% / {formatSigned(selectedSymbolInfo.spreadBps, 2)} bps），
+              zscore {formatNumber(selectedSymbolInfo.zscore, 3)}。
             </p>
           ) : (
-            <p className="hint">当前没有可操作交易对。</p>
+            <p className="hint">当前没有该交易标的的实时盘口。</p>
           )}
 
           {formError ? <p className="form-error">{formError}</p> : null}
 
           <div className="action-row">
-            <button className="btn btn-secondary" type="submit" disabled={isBusy}>
+            <button className="btn btn-secondary" type="submit" disabled={isBusy || selectionSaving}>
               更新参数
             </button>
-            <button className="btn btn-danger-outline" type="button" onClick={() => void onFlattenClick()} disabled={isBusy}>
+            <button
+              className="btn btn-danger-outline"
+              type="button"
+              onClick={() => void onFlattenClick()}
+              disabled={isBusy || selectionSaving}
+            >
               一键平仓
             </button>
           </div>
@@ -320,6 +428,7 @@ export default function TradePage() {
                 <th>Paradex Ask</th>
                 <th>GRVT Bid</th>
                 <th>GRVT Ask</th>
+                <th>Spread (%)</th>
                 <th>Spread (bps)</th>
                 <th>Spread (price)</th>
                 <th>ZScore</th>
@@ -332,7 +441,7 @@ export default function TradePage() {
             <tbody>
               {symbols.length === 0 ? (
                 <tr>
-                  <td colSpan={12} className="empty-cell">
+                  <td colSpan={13} className="empty-cell">
                     当前没有交易对数据
                   </td>
                 </tr>
@@ -344,6 +453,7 @@ export default function TradePage() {
                     <td>{formatPrice(item.paradexAsk)}</td>
                     <td>{formatPrice(item.grvtBid)}</td>
                     <td>{formatPrice(item.grvtAsk)}</td>
+                    <td>{formatSigned(item.spreadBps / 100, 4)}</td>
                     <td>{formatSigned(item.spreadBps, 2)}</td>
                     <td>{formatSigned(item.spreadPrice, 4)}</td>
                     <td>{formatNumber(item.zscore, 3)}</td>

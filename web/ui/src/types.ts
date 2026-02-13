@@ -48,6 +48,21 @@ export interface SymbolRow {
   updatedAt: string;
 }
 
+export interface TradeTopCandidate {
+  symbol: string;
+  paradexMarket: string;
+  grvtMarket: string;
+  tradableEdgePct: number;
+  tradableEdgeBps: number;
+  grossNominalSpread: number;
+}
+
+export interface TradeSelection {
+  selectedSymbol: string;
+  top10Candidates: TradeTopCandidate[];
+  updatedAt: string;
+}
+
 export interface RuntimeConfig {
   dryRun: boolean;
   simulatedMarketData: boolean;

@@ -1,4 +1,4 @@
-import { DEFAULT_STATUS } from "../types";
+﻿import { DEFAULT_STATUS } from "../types";
 import type {
   ActionResult,
   DashboardStatus,
@@ -11,6 +11,8 @@ import type {
   SupportedSymbolInfo,
   SymbolParamsPayload,
   SymbolRow,
+  TradeSelection,
+  TradeTopCandidate,
   TradingMode
 } from "../types";
 
@@ -96,7 +98,6 @@ function buildUrl(path: string): string {
   if (/^https?:\/\//i.test(path)) {
     return path;
   }
-
   if (!API_BASE_URL) {
     return path;
   }
@@ -162,7 +163,7 @@ function readErrorDetail(data: unknown, rawText: string, fallback: string): stri
     }
   }
 
-  if (rawText.trim().length > 0) {
+  if (rawText.trim()) {
     return rawText;
   }
 
@@ -211,22 +212,11 @@ function pickNumber(record: Record<string, unknown>, keys: string[], fallback: n
 
 function parseEngineStatus(value: string): EngineStatus {
   const normalized = value.toLowerCase();
-
-  if (normalized === "running") {
-    return "running";
-  }
-  if (normalized === "stopped") {
-    return "stopped";
-  }
-  if (normalized === "starting") {
-    return "starting";
-  }
-  if (normalized === "stopping") {
-    return "stopping";
-  }
-  if (normalized === "error") {
-    return "error";
-  }
+  if (normalized === "running") return "running";
+  if (normalized === "stopped") return "stopped";
+  if (normalized === "starting") return "starting";
+  if (normalized === "stopping") return "stopping";
+  if (normalized === "error") return "error";
   return "unknown";
 }
 
@@ -255,8 +245,7 @@ function extractArray(value: unknown): unknown[] {
     return [];
   }
 
-  const candidates = ["items", "rows", "list", "data", "symbols", "events"];
-  for (const key of candidates) {
+  for (const key of ["items", "rows", "list", "data", "symbols", "events", "top10_candidates"]) {
     const candidate = record[key];
     if (Array.isArray(candidate)) {
       return candidate;
@@ -285,9 +274,7 @@ export function normalizeStatus(data: unknown): DashboardStatus {
     : pickNumber(record, ["risk_critical", "critical_count"], 0);
 
   return {
-    engineStatus: parseEngineStatus(
-      pickString(record, ["engine_status", "engineStatus", "status"], DEFAULT_STATUS.engineStatus)
-    ),
+    engineStatus: parseEngineStatus(pickString(record, ["engine_status", "engineStatus", "status"], DEFAULT_STATUS.engineStatus)),
     mode: parseMode(pickString(record, ["mode"], DEFAULT_STATUS.mode)),
     netExposure: pickNumber(record, ["net_exposure", "netExposure", "exposure"], 0),
     dailyVolume: pickNumber(record, ["daily_volume", "dailyVolume", "volume"], 0),
@@ -330,10 +317,10 @@ export function normalizeSymbol(data: unknown): SymbolRow | null {
 }
 
 export function normalizeSymbols(data: unknown): SymbolRow[] {
-  const rows = extractArray(data)
+  return extractArray(data)
     .map((item) => normalizeSymbol(item))
-    .filter((item): item is SymbolRow => item !== null);
-  return rows.sort((a, b) => a.symbol.localeCompare(b.symbol));
+    .filter((item): item is SymbolRow => item !== null)
+    .sort((a, b) => a.symbol.localeCompare(b.symbol));
 }
 
 export function normalizeEvent(data: unknown): EventLog | null {
@@ -349,11 +336,7 @@ export function normalizeEvent(data: unknown): EventLog | null {
   }
 
   const source = pickString(record, ["source", "module", "component"], "system");
-  const id = pickString(
-    record,
-    ["id", "event_id", "eventId"],
-    `${source}-${ts}-${Math.random().toString(36).slice(2, 8)}`
-  );
+  const id = pickString(record, ["id", "event_id", "eventId"], `${source}-${ts}-${Math.random().toString(36).slice(2, 8)}`);
 
   return {
     id,
@@ -365,19 +348,16 @@ export function normalizeEvent(data: unknown): EventLog | null {
 }
 
 export function normalizeEvents(data: unknown): EventLog[] {
-  const rows = extractArray(data)
+  return extractArray(data)
     .map((item) => normalizeEvent(item))
-    .filter((item): item is EventLog => item !== null);
-  return rows.sort((a, b) => b.ts.localeCompare(a.ts));
+    .filter((item): item is EventLog => item !== null)
+    .sort((a, b) => b.ts.localeCompare(a.ts));
 }
 
 function normalizeActionResult(data: unknown, fallback: string): ActionResult {
   const record = toRecord(data);
   if (!record) {
-    return {
-      ok: true,
-      message: fallback
-    };
+    return { ok: true, message: fallback };
   }
 
   return {
@@ -390,47 +370,29 @@ function normalizeConfiguredFlag(value: unknown): boolean {
   if (typeof value === "boolean") {
     return value;
   }
-
   if (typeof value === "number") {
     return value > 0;
   }
-
   if (typeof value === "string") {
     const normalized = value.trim().toLowerCase();
     if (!normalized) {
       return false;
     }
-    if (
-      normalized === "true" ||
-      normalized === "1" ||
-      normalized === "yes" ||
-      normalized === "configured" ||
-      normalized === "set"
-    ) {
+    if (["true", "1", "yes", "configured", "set"].includes(normalized)) {
       return true;
     }
-    if (normalized === "false" || normalized === "0" || normalized === "no" || normalized === "unset") {
+    if (["false", "0", "no", "unset"].includes(normalized)) {
       return false;
     }
   }
 
   const record = toRecord(value);
   if (record) {
-    if ("configured" in record) {
-      return normalizeConfiguredFlag(record.configured);
-    }
-    if ("is_configured" in record) {
-      return normalizeConfiguredFlag(record.is_configured);
-    }
-    if ("isConfigured" in record) {
-      return normalizeConfiguredFlag(record.isConfigured);
-    }
-    if ("set" in record) {
-      return normalizeConfiguredFlag(record.set);
-    }
-    if ("exists" in record) {
-      return normalizeConfiguredFlag(record.exists);
-    }
+    if ("configured" in record) return normalizeConfiguredFlag(record.configured);
+    if ("is_configured" in record) return normalizeConfiguredFlag(record.is_configured);
+    if ("isConfigured" in record) return normalizeConfiguredFlag(record.isConfigured);
+    if ("set" in record) return normalizeConfiguredFlag(record.set);
+    if ("exists" in record) return normalizeConfiguredFlag(record.exists);
   }
 
   return false;
@@ -438,9 +400,7 @@ function normalizeConfiguredFlag(value: unknown): boolean {
 
 function extractConfiguredFieldSet(record: Record<string, unknown>): Set<string> {
   const set = new Set<string>();
-
-  const candidates = ["configured_fields", "configuredFields", "fields"];
-  for (const key of candidates) {
+  for (const key of ["configured_fields", "configuredFields", "fields"]) {
     const value = record[key];
     if (!Array.isArray(value)) {
       continue;
@@ -451,14 +411,10 @@ function extractConfiguredFieldSet(record: Record<string, unknown>): Set<string>
       }
     }
   }
-
   return set;
 }
 
-function normalizeExchangeStatus<T extends string>(
-  source: unknown,
-  fields: readonly T[]
-): Record<T, CredentialFieldStatus> {
+function normalizeExchangeStatus<T extends string>(source: unknown, fields: readonly T[]): Record<T, CredentialFieldStatus> {
   const result = {} as Record<T, CredentialFieldStatus>;
   for (const field of fields) {
     result[field] = { configured: false, masked: "" };
@@ -509,8 +465,7 @@ export function normalizeCredentialsStatus(data: unknown): CredentialsStatus {
   const nestedRecord = toRecord(record.data);
   const sourceRecord = nestedRecord ?? record;
 
-  const paradexSource =
-    sourceRecord.paradex ?? sourceRecord.paradex_status ?? sourceRecord.paradexStatus;
+  const paradexSource = sourceRecord.paradex ?? sourceRecord.paradex_status ?? sourceRecord.paradexStatus;
   const grvtSource = sourceRecord.grvt ?? sourceRecord.grvt_status ?? sourceRecord.grvtStatus;
 
   return {
@@ -537,11 +492,7 @@ function normalizeSupportedSymbol(data: unknown): SupportedSymbolInfo | null {
     baseAsset: pickString(record, ["base_asset", "baseAsset"], symbol),
     quoteAsset: pickString(record, ["quote_asset", "quoteAsset"], "USDT"),
     recommendedLeverage: Math.max(1, pickNumber(record, ["recommended_leverage", "recommendedLeverage"], 2)),
-    leverageNote: pickString(
-      record,
-      ["leverage_note", "leverageNote"],
-      "建议低杠杆，用户可在交易所调整"
-    )
+    leverageNote: pickString(record, ["leverage_note", "leverageNote"], "建议低杠杆，用户可在交易所调整")
   };
 }
 
@@ -604,10 +555,7 @@ export function normalizeMarketTopSpreads(data: unknown): MarketTopSpreadsRespon
     totalSymbols: 0,
     skippedCount: 0,
     skippedReasons: {},
-    feeProfile: {
-      paradexLeg: "taker",
-      grvtLeg: "maker"
-    },
+    feeProfile: { paradexLeg: "taker", grvtLeg: "maker" },
     lastError: null,
     rows: []
   };
@@ -627,6 +575,7 @@ export function normalizeMarketTopSpreads(data: unknown): MarketTopSpreadsRespon
   for (const [key, value] of Object.entries(skippedReasonsRecord)) {
     if (typeof value === "number" && Number.isFinite(value) && value > 0) {
       normalizedSkippedReasons[key] = value;
+      continue;
     }
     if (typeof value === "string" && value.trim()) {
       const parsed = Number(value);
@@ -635,35 +584,20 @@ export function normalizeMarketTopSpreads(data: unknown): MarketTopSpreadsRespon
       }
     }
   }
+
   const feeProfileRecord = toRecord(record.fee_profile) ?? toRecord(record.feeProfile);
   const paradexLegRaw = pickString(feeProfileRecord ?? {}, ["paradex_leg", "paradexLeg"], "taker");
   const grvtLegRaw = pickString(feeProfileRecord ?? {}, ["grvt_leg", "grvtLeg"], "maker");
   const lastErrorRaw = record.last_error ?? record.lastError;
-  const configuredSymbols = Math.max(
-    0,
-    pickNumber(record, ["configured_symbols", "configuredSymbols"], fallback.configuredSymbols)
-  );
-  const comparableSymbols = Math.max(
-    0,
-    pickNumber(record, ["comparable_symbols", "comparableSymbols"], fallback.comparableSymbols)
-  );
-  const executableSymbols = Math.max(
-    0,
-    pickNumber(record, ["executable_symbols", "executableSymbols"], rows.length)
-  );
-  const scannedSymbols = Math.max(
-    0,
-    pickNumber(record, ["scanned_symbols", "scannedSymbols"], comparableSymbols)
-  );
 
   return {
     updatedAt: pickString(record, ["updated_at", "updatedAt"], fallback.updatedAt),
     scanIntervalSec: pickNumber(record, ["scan_interval_sec", "scanIntervalSec"], fallback.scanIntervalSec),
     limit: Math.max(1, pickNumber(record, ["limit"], fallback.limit)),
-    configuredSymbols,
-    comparableSymbols,
-    executableSymbols,
-    scannedSymbols,
+    configuredSymbols: Math.max(0, pickNumber(record, ["configured_symbols", "configuredSymbols"], fallback.configuredSymbols)),
+    comparableSymbols: Math.max(0, pickNumber(record, ["comparable_symbols", "comparableSymbols"], fallback.comparableSymbols)),
+    executableSymbols: Math.max(0, pickNumber(record, ["executable_symbols", "executableSymbols"], rows.length)),
+    scannedSymbols: Math.max(0, pickNumber(record, ["scanned_symbols", "scannedSymbols"], fallback.scannedSymbols)),
     totalSymbols: Math.max(0, pickNumber(record, ["total_symbols", "totalSymbols"], rows.length)),
     skippedCount: Math.max(0, pickNumber(record, ["skipped_count", "skippedCount"], fallback.skippedCount)),
     skippedReasons: normalizedSkippedReasons,
@@ -673,6 +607,50 @@ export function normalizeMarketTopSpreads(data: unknown): MarketTopSpreadsRespon
     },
     lastError: typeof lastErrorRaw === "string" && lastErrorRaw.trim() ? lastErrorRaw : null,
     rows
+  };
+}
+
+function normalizeTradeTopCandidate(data: unknown): TradeTopCandidate | null {
+  const record = toRecord(data);
+  if (!record) {
+    return null;
+  }
+
+  const symbol = pickString(record, ["symbol"], "");
+  if (!symbol) {
+    return null;
+  }
+
+  return {
+    symbol,
+    paradexMarket: pickString(record, ["paradex_market", "paradexMarket"], ""),
+    grvtMarket: pickString(record, ["grvt_market", "grvtMarket"], ""),
+    tradableEdgePct: pickNumber(record, ["tradable_edge_pct", "tradableEdgePct"], 0),
+    tradableEdgeBps: pickNumber(record, ["tradable_edge_bps", "tradableEdgeBps"], 0),
+    grossNominalSpread: pickNumber(record, ["gross_nominal_spread", "grossNominalSpread"], 0)
+  };
+}
+
+export function normalizeTradeSelection(data: unknown): TradeSelection {
+  const fallback: TradeSelection = {
+    selectedSymbol: "",
+    top10Candidates: [],
+    updatedAt: ""
+  };
+
+  const record = toRecord(data);
+  if (!record) {
+    return fallback;
+  }
+
+  const top10Candidates = extractArray(record.top10_candidates ?? record.top10Candidates)
+    .map((item) => normalizeTradeTopCandidate(item))
+    .filter((item): item is TradeTopCandidate => item !== null);
+
+  return {
+    selectedSymbol: pickString(record, ["selected_symbol", "selectedSymbol"], ""),
+    top10Candidates,
+    updatedAt: pickString(record, ["updated_at", "updatedAt"], "")
   };
 }
 
@@ -699,29 +677,21 @@ export function normalizePublicConfig(data: unknown): PublicConfig {
     .filter((item): item is SupportedSymbolInfo => item !== null);
 
   if (!runtimeRecord) {
-    return {
-      ...fallback,
-      symbols: symbolItems
-    };
+    return { ...fallback, symbols: symbolItems };
   }
 
   const dryRunRaw = runtimeRecord.dry_run ?? runtimeRecord.dryRun;
-  const simulatedMarketDataRaw =
-    runtimeRecord.simulated_market_data ?? runtimeRecord.simulatedMarketData ?? dryRunRaw;
+  const simulatedMarketDataRaw = runtimeRecord.simulated_market_data ?? runtimeRecord.simulatedMarketData ?? dryRunRaw;
   const liveOrderEnabledRaw = runtimeRecord.live_order_enabled ?? runtimeRecord.liveOrderEnabled;
-  const confirmationTextRaw =
-    runtimeRecord.enable_order_confirmation_text ?? runtimeRecord.enableOrderConfirmationText;
+  const confirmationTextRaw = runtimeRecord.enable_order_confirmation_text ?? runtimeRecord.enableOrderConfirmationText;
   const defaultModeRaw = runtimeRecord.default_mode ?? runtimeRecord.defaultMode;
 
   return {
     runtime: {
       dryRun: typeof dryRunRaw === "boolean" ? dryRunRaw : fallback.runtime.dryRun,
       simulatedMarketData:
-        typeof simulatedMarketDataRaw === "boolean"
-          ? simulatedMarketDataRaw
-          : fallback.runtime.simulatedMarketData,
-      liveOrderEnabled:
-        typeof liveOrderEnabledRaw === "boolean" ? liveOrderEnabledRaw : fallback.runtime.liveOrderEnabled,
+        typeof simulatedMarketDataRaw === "boolean" ? simulatedMarketDataRaw : fallback.runtime.simulatedMarketData,
+      liveOrderEnabled: typeof liveOrderEnabledRaw === "boolean" ? liveOrderEnabledRaw : fallback.runtime.liveOrderEnabled,
       enableOrderConfirmationText:
         typeof confirmationTextRaw === "string" && confirmationTextRaw.trim()
           ? confirmationTextRaw
@@ -749,16 +719,12 @@ export const apiClient = {
   },
 
   async startEngine(): Promise<ActionResult> {
-    const response = await requestJson<unknown>("/api/engine/start", {
-      method: "POST"
-    });
+    const response = await requestJson<unknown>("/api/engine/start", { method: "POST" });
     return normalizeActionResult(response, "引擎启动命令已发送");
   },
 
   async stopEngine(): Promise<ActionResult> {
-    const response = await requestJson<unknown>("/api/engine/stop", {
-      method: "POST"
-    });
+    const response = await requestJson<unknown>("/api/engine/stop", { method: "POST" });
     return normalizeActionResult(response, "引擎停止命令已发送");
   },
 
@@ -805,10 +771,7 @@ export const apiClient = {
     return normalizeActionResult(response, "凭证已应用");
   },
 
-  async validateCredentials(payload: {
-    source: CredentialsValidationSource;
-    payload?: CredentialsPayload;
-  }): Promise<CredentialsValidationResponse> {
+  async validateCredentials(payload: { source: CredentialsValidationSource; payload?: CredentialsPayload }): Promise<CredentialsValidationResponse> {
     const response = await requestJson<unknown>("/api/credentials/validate", {
       method: "POST",
       body: JSON.stringify(payload)
@@ -844,6 +807,7 @@ export const apiClient = {
 
     const paradex = parseExchange(dataRecord?.paradex);
     const grvt = parseExchange(dataRecord?.grvt);
+
     return {
       ok: normalizeConfiguredFlag(record?.ok),
       message: pickString(record ?? {}, ["message", "detail"], ""),
@@ -870,11 +834,31 @@ export const apiClient = {
   async setMarketDataMode(simulatedMarketData: boolean): Promise<ActionResult> {
     const response = await requestJson<unknown>("/api/runtime/market-data-mode", {
       method: "POST",
-      body: JSON.stringify({
-        simulated_market_data: simulatedMarketData
-      })
+      body: JSON.stringify({ simulated_market_data: simulatedMarketData })
     });
     return normalizeActionResult(response, "行情模式已更新");
+  },
+
+  async getTradeSelection(options?: { forceRefresh?: boolean }): Promise<TradeSelection> {
+    const params = new URLSearchParams();
+    if (options?.forceRefresh) {
+      params.set("force_refresh", "true");
+    }
+    const query = params.toString();
+    const path = query ? `/api/trade/selection?${query}` : "/api/trade/selection";
+    const response = await requestJson<unknown>(path);
+    return normalizeTradeSelection(response);
+  },
+
+  async setTradeSelection(symbol: string, options?: { forceRefresh?: boolean }): Promise<ActionResult> {
+    const response = await requestJson<unknown>("/api/trade/selection", {
+      method: "POST",
+      body: JSON.stringify({
+        symbol,
+        force_refresh: options?.forceRefresh ?? true
+      })
+    });
+    return normalizeActionResult(response, "交易标的已更新");
   },
 
   async getPublicConfig(): Promise<PublicConfig> {
@@ -882,10 +866,7 @@ export const apiClient = {
     return normalizePublicConfig(response);
   },
 
-  async getMarketTopSpreads(options?: {
-    limit?: number;
-    forceRefresh?: boolean;
-  }): Promise<MarketTopSpreadsResponse> {
+  async getMarketTopSpreads(options?: { limit?: number; forceRefresh?: boolean }): Promise<MarketTopSpreadsResponse> {
     const params = new URLSearchParams();
     const limit = options?.limit ?? 10;
     const forceRefresh = options?.forceRefresh ?? false;

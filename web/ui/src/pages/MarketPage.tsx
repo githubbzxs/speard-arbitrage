@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+﻿import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { apiClient, getErrorMessage } from "../api/client";
 import type { MarketTopSpreadsResponse } from "../types";
@@ -130,7 +130,8 @@ export default function MarketPage() {
 
         <p className="hint">
           计算口径：实际价差 = max(Paradex 买一 - GRVT 买一, GRVT 卖一 - Paradex 卖一)；
-          名义价差 = 实际价差 × min(Paradex 最大杠杆, GRVT 最大杠杆)；百分比口径 = 价差 / 参考中间价。
+          名义价差 = 实际价差 × min(Paradex 最大杠杆, GRVT 最大杠杆)；
+          百分比口径 = 价差 / 参考中间价。
         </p>
         <p className="hint">
           最近刷新 {formatTimestamp(result.updatedAt)}，扫描周期约 {result.scanIntervalSec} 秒，
@@ -154,7 +155,9 @@ export default function MarketPage() {
                 <th>Paradex 买/卖</th>
                 <th>GRVT 买/卖</th>
                 <th>方向</th>
-                <th>实际价差</th>
+                <th>实际价差(Price)</th>
+                <th>实际价差(%)</th>
+                <th>实际价差(bps)</th>
                 <th>有效杠杆</th>
                 <th>名义价差</th>
                 <th>预估费用</th>
@@ -164,7 +167,7 @@ export default function MarketPage() {
             <tbody>
               {topRows.length === 0 ? (
                 <tr>
-                  <td colSpan={10} className="empty-cell">
+                  <td colSpan={12} className="empty-cell">
                     暂无行情数据
                   </td>
                 </tr>
@@ -191,11 +194,14 @@ export default function MarketPage() {
                       <small className="muted-inline">中间价 {formatPrice(row.grvtMid)}</small>
                     </td>
                     <td data-label="方向">{directionLabel(row.direction)}</td>
-                    <td data-label="实际价差">
-                      <div>{formatSigned(row.tradableEdgePrice, 6)}</div>
-                      <small className="muted-inline">
-                        {formatSigned(row.tradableEdgePct, 4)}% / {formatSigned(row.tradableEdgeBps, 2)} bps
-                      </small>
+                    <td data-label="实际价差(Price)">
+                      <strong>{formatSigned(row.tradableEdgePrice, 6)}</strong>
+                    </td>
+                    <td data-label="实际价差(%)">
+                      <strong>{formatSigned(row.tradableEdgePct, 4)}%</strong>
+                    </td>
+                    <td data-label="实际价差(bps)">
+                      <strong>{formatSigned(row.tradableEdgeBps, 2)} bps</strong>
                     </td>
                     <td data-label="有效杠杆">
                       <div>{formatNumber(row.effectiveLeverage, 2)}x</div>

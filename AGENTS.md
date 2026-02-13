@@ -132,6 +132,16 @@
   - Impact：`backend/arbbot/market/scanner.py`、`backend/arbbot/security/credentials_validator.py`、`backend/tests/test_market_scanner_private_key_validation.py`、`backend/tests/test_api_credentials.py`、`web/ui/src/pages/ApiConfigPage.tsx`。
   - Verify：填写非法 GRVT `private_key` 时，凭证校验与行情扫描都返回“GRVT private_key 格式错误：必须是十六进制字符串（可带 0x 前缀）”。
 
+- [2026-02-13] Paradex 凭证校验增加私钥类型容错（string/int 双候选）
+  - Why：修复 `Paradex 校验失败: %x format: an integer is required, not str`，避免“凭证填写正确但校验失败”。
+  - Impact：`backend/arbbot/exchanges/paradex_auth.py`、`backend/arbbot/exchanges/paradex_adapter.py`、`backend/arbbot/security/credentials_validator.py`、`backend/tests/test_paradex_auth.py`。
+  - Verify：`python -m pytest backend/tests`，并在 API 配置页执行凭证检测不再出现 `%x format` 原始错误。
+
+- [2026-02-13] 新增 Top10 单标的手动选择并强制启动前选择
+  - Why：确保“实际交易标的”与 Top10 候选一致，避免下单页和行情页标的口径分离。
+  - Impact：`backend/arbbot/web/api.py`、`backend/arbbot/strategy/orchestrator.py`、`backend/tests/test_api_trade_selection.py`、`web/ui/src/api/client.ts`、`web/ui/src/types.ts`、`web/ui/src/pages/TradePage.tsx`、`web/ui/src/pages/MarketPage.tsx`。
+  - Verify：`python -m pytest backend/tests`、`cd web/ui && npm run build`，并确认未选标的时无法启动引擎、下单页仅可选择 Top10 候选。
+
 ## Commands
 - 后端测试：`python -m pytest backend/tests`
 - 后端启动：`python backend/main.py`

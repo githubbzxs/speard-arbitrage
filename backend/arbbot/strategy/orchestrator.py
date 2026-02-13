@@ -90,6 +90,7 @@ class ArbitrageOrchestrator:
         self._consistency_ok: dict[str, bool] = {}
         self._symbol_snapshots: dict[str, SymbolSnapshot] = {}
         self._event_memory: deque[dict[str, Any]] = deque(maxlen=500)
+        self._selected_symbol: SymbolConfig | None = None
 
         self._stop_event = asyncio.Event()
         self._tasks: list[asyncio.Task] = []
@@ -114,7 +115,7 @@ class ArbitrageOrchestrator:
                     )
                     return False
 
-                symbols = [cfg for cfg in self.config.symbols if cfg.enabled]
+                symbols = self._resolve_start_symbols()
                 await asyncio.gather(self.paradex.connect(symbols), self.grvt.connect(symbols))
                 self.ws_supervisor.mark_connected("paradex")
                 self.ws_supervisor.mark_connected("grvt")
@@ -133,6 +134,10 @@ class ArbitrageOrchestrator:
                 self.engine_status = EngineStatus.ERROR
                 await self._emit_event(EventLevel.ERROR, "engine", f"启动失败: {exc}")
                 return False
+
+    def set_selected_symbol(self, symbol_cfg: SymbolConfig | None) -> None:
+        """设置手动选择的交易标的。"""
+        self._selected_symbol = symbol_cfg
 
     async def stop(self) -> bool:
         """停止引擎。"""
@@ -702,7 +707,7 @@ class ArbitrageOrchestrator:
         return {"ok": True, "message": "参数更新成功"}
 
     async def flatten_symbol(self, symbol: str) -> dict[str, Any]:
-        symbol_cfg = next((cfg for cfg in self.config.symbols if cfg.symbol == symbol), None)
+        symbol_cfg = self._find_symbol_config(symbol)
         if symbol_cfg is None:
             return {"ok": False, "message": f"symbol 不存在: {symbol}"}
 
@@ -713,3 +718,13 @@ class ArbitrageOrchestrator:
             "message": "平仓指令已执行",
             "report": report.to_dict(),
         }
+
+    def _resolve_start_symbols(self) -> list[SymbolConfig]:
+        if self._selected_symbol is not None:
+            return [self._selected_symbol]
+        return [cfg for cfg in self.config.symbols if cfg.enabled]
+
+    def _find_symbol_config(self, symbol: str) -> SymbolConfig | None:
+        if self._selected_symbol is not None and self._selected_symbol.symbol == symbol:
+            return self._selected_symbol
+        return next((cfg for cfg in self.config.symbols if cfg.symbol == symbol), None)

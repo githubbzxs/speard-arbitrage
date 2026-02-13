@@ -8,6 +8,7 @@ from decimal import Decimal
 
 from ..config import ExchangeConfig, SymbolConfig
 from ..models import BBO, ExchangeName, OrderAck, OrderRequest, TradeSide
+from .paradex_auth import build_paradex_auth_candidates, should_retry_with_int_key
 from .base import BaseExchangeAdapter
 
 
@@ -34,20 +35,26 @@ class ParadexAdapter(BaseExchangeAdapter):
 
         import ccxt.async_support as ccxt  # type: ignore
 
-        kwargs = {
-            "enableRateLimit": True,
-            "walletAddress": self.config.credentials.l2_address,
-            "privateKey": self.config.credentials.l2_private_key,
-            "options": {
-                "paradexAccount": {
-                    "privateKey": self.config.credentials.l2_private_key,
-                    "address": self.config.credentials.l2_address,
-                }
-            },
-        }
+        candidates = build_paradex_auth_candidates(
+            self.config.credentials.l2_private_key,
+            self.config.credentials.l2_address,
+        )
+        last_exc: Exception | None = None
+        for idx, candidate in enumerate(candidates):
+            client = ccxt.paradex(candidate.kwargs)
+            try:
+                await client.load_markets()
+                self._client = client
+                return
+            except Exception as exc:
+                last_exc = exc
+                await client.close()
+                is_last = idx >= len(candidates) - 1
+                if is_last or not should_retry_with_int_key(exc):
+                    break
 
-        self._client = ccxt.paradex(kwargs)
-        await self._client.load_markets()
+        if last_exc is not None:
+            raise last_exc
 
     async def disconnect(self) -> None:
         if self._client is not None:

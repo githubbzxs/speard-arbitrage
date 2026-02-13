@@ -13,6 +13,7 @@ from pysdk.grvt_raw_env import GrvtEnv as GrvtRawEnv
 from pysdk.grvt_raw_types import ApiGetAllInitialLeverageRequest
 
 from ..config import AppConfig
+from ..exchanges.paradex_auth import build_paradex_auth_candidates, should_retry_with_int_key
 
 
 def _is_valid_hex_key(value: str) -> bool:
@@ -72,44 +73,53 @@ class CredentialsValidator:
 
         checks["required_fields"] = True
 
-        client = ccxt.paradex(
-            {
-                "enableRateLimit": True,
-                "walletAddress": l2_address,
-                "privateKey": l2_private_key,
-                "options": {
-                    "paradexAccount": {
-                        "privateKey": l2_private_key,
-                        "address": l2_address,
-                    }
-                },
-            }
-        )
+        last_exc: Exception | None = None
+        candidates = build_paradex_auth_candidates(l2_private_key, l2_address)
+        for idx, candidate in enumerate(candidates):
+            client = ccxt.paradex(candidate.kwargs)
+            try:
+                await client.load_markets()
+                checks["load_markets"] = True
 
-        try:
-            await client.load_markets()
-            checks["load_markets"] = True
+                await client.fetch_balance()
+                checks["fetch_balance"] = True
 
-            await client.fetch_balance()
-            checks["fetch_balance"] = True
+                target_market = self._config.symbols[0].paradex_market if self._config.symbols else "BTC/USD:USDC"
+                await client.fetch_positions([target_market])
+                checks["fetch_positions"] = True
 
-            target_market = self._config.symbols[0].paradex_market if self._config.symbols else "BTC/USD:USDC"
-            await client.fetch_positions([target_market])
-            checks["fetch_positions"] = True
+                return {
+                    "valid": True,
+                    "reason": "Paradex 凭证有效",
+                    "checks": checks,
+                }
+            except Exception as exc:
+                last_exc = exc
+                is_last = idx >= len(candidates) - 1
+                if is_last or not should_retry_with_int_key(exc):
+                    break
+            finally:
+                await client.close()
 
-            return {
-                "valid": True,
-                "reason": "Paradex 凭证有效",
-                "checks": checks,
-            }
-        except Exception as exc:
+        if last_exc is None:
             return {
                 "valid": False,
-                "reason": f"Paradex 校验失败: {exc}",
+                "reason": "Paradex 校验失败: 未知异常",
                 "checks": checks,
             }
-        finally:
-            await client.close()
+
+        if should_retry_with_int_key(last_exc):
+            return {
+                "valid": False,
+                "reason": "Paradex 校验失败: L2 私钥格式与签名器不兼容，请确认十六进制格式（可带 0x 前缀）",
+                "checks": checks,
+            }
+
+        return {
+            "valid": False,
+            "reason": f"Paradex 校验失败: {last_exc}",
+            "checks": checks,
+        }
 
     async def _validate_grvt(self, payload: dict[str, str]) -> dict[str, Any]:
         checks: dict[str, bool] = {

@@ -9,8 +9,9 @@ from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
-from ..config import AppConfig
+from ..config import AppConfig, SymbolConfig
 from ..market import NominalSpreadScanner
+from ..models import EngineStatus, utc_iso
 from ..security import CredentialsValidator
 from ..storage import CredentialsRepository
 from ..strategy.orchestrator import ArbitrageOrchestrator
@@ -57,12 +58,23 @@ class RuntimeMarketDataRequest(BaseModel):
     simulated_market_data: bool = Field(description="是否使用模拟行情")
 
 
+class TradeSelectionRequest(BaseModel):
+    symbol: str = Field(description="交易标的（必须来自 Top10）")
+    force_refresh: bool = Field(default=False, description="是否强制刷新 Top10 后再校验")
+
+
 def create_app(config: AppConfig) -> FastAPI:
     """创建 API 应用。"""
     orchestrator = ArbitrageOrchestrator(config)
     credentials_repository = CredentialsRepository(config.storage.sqlite_path)
     credentials_validator = CredentialsValidator(config)
     market_scanner = NominalSpreadScanner(config=config)
+    top_limit = 10
+    selected_symbol = ""
+    selected_symbol_config: SymbolConfig | None = None
+    top10_candidates: list[dict[str, Any]] = []
+    top10_symbol_map: dict[str, SymbolConfig] = {}
+    top10_updated_at = ""
 
     def hydrate_runtime_credentials_from_saved() -> None:
         """将已保存凭证同步到运行时配置，供行情扫描等只读场景使用。"""
@@ -79,6 +91,83 @@ def create_app(config: AppConfig) -> FastAPI:
             value = str(grvt_saved.get(field, "")).strip()
             if value:
                 setattr(config.grvt.credentials, field, value)
+
+    def _resolve_symbol_config_from_row(row: dict[str, Any]) -> SymbolConfig | None:
+        symbol = str(row.get("symbol") or "").strip().upper()
+        if not symbol:
+            return None
+
+        configured = next((cfg for cfg in config.symbols if cfg.symbol == symbol), None)
+        if configured is not None:
+            return configured
+
+        paradex_market = str(row.get("paradex_market") or row.get("paradexMarket") or "").strip()
+        grvt_market = str(row.get("grvt_market") or row.get("grvtMarket") or "").strip()
+        if not paradex_market or not grvt_market:
+            return None
+
+        base_asset = str(row.get("base_asset") or row.get("baseAsset") or symbol.replace("-PERP", "")).strip().upper()
+        quote_asset = "USDT"
+        return SymbolConfig(
+            symbol=symbol,
+            paradex_market=paradex_market,
+            grvt_market=grvt_market,
+            base_asset=base_asset,
+            quote_asset=quote_asset,
+            recommended_leverage=2,
+            leverage_note="Top10 候选标的",
+            enabled=True,
+        )
+
+    async def refresh_top10_candidates(force_refresh: bool = False) -> None:
+        nonlocal selected_symbol, selected_symbol_config, top10_candidates, top10_symbol_map, top10_updated_at
+
+        def parse_float(value: Any) -> float:
+            try:
+                return float(value)
+            except (TypeError, ValueError):
+                return 0.0
+
+        hydrate_runtime_credentials_from_saved()
+        payload = await market_scanner.get_top_spreads(limit=top_limit, force_refresh=force_refresh)
+        rows = payload.get("rows")
+        rows_list = rows if isinstance(rows, list) else []
+
+        next_candidates: list[dict[str, Any]] = []
+        next_symbol_map: dict[str, SymbolConfig] = {}
+        for raw_row in rows_list:
+            if not isinstance(raw_row, dict):
+                continue
+            symbol_cfg = _resolve_symbol_config_from_row(raw_row)
+            if symbol_cfg is None:
+                continue
+
+            symbol = symbol_cfg.symbol
+            next_symbol_map[symbol] = symbol_cfg
+            next_candidates.append(
+                {
+                    "symbol": symbol,
+                    "paradex_market": symbol_cfg.paradex_market,
+                    "grvt_market": symbol_cfg.grvt_market,
+                    "tradable_edge_pct": parse_float(raw_row.get("tradable_edge_pct")),
+                    "tradable_edge_bps": parse_float(raw_row.get("tradable_edge_bps")),
+                    "gross_nominal_spread": parse_float(raw_row.get("gross_nominal_spread")),
+                }
+            )
+
+        top10_candidates = next_candidates
+        top10_symbol_map = next_symbol_map
+        top10_updated_at = str(payload.get("updated_at") or utc_iso())
+
+        if selected_symbol:
+            next_selected_config = top10_symbol_map.get(selected_symbol)
+            if next_selected_config is None:
+                selected_symbol = ""
+                selected_symbol_config = None
+                orchestrator.set_selected_symbol(None)
+            else:
+                selected_symbol_config = next_selected_config
+                orchestrator.set_selected_symbol(next_selected_config)
 
     app = FastAPI(title="跨所价差套利", version="1.0.0")
     app.state.orchestrator = orchestrator
@@ -131,6 +220,49 @@ def create_app(config: AppConfig) -> FastAPI:
         return await market_scanner.get_top_spreads(
             limit=limit,
             force_refresh=force_refresh,
+        )
+
+    @app.get("/api/trade/selection")
+    async def get_trade_selection(force_refresh: bool = False) -> dict[str, Any]:
+        await refresh_top10_candidates(force_refresh=force_refresh)
+        return {
+            "selected_symbol": selected_symbol,
+            "top10_candidates": top10_candidates,
+            "updated_at": top10_updated_at,
+        }
+
+    @app.post("/api/trade/selection", response_model=ActionResponse)
+    async def set_trade_selection(payload: TradeSelectionRequest) -> ActionResponse:
+        nonlocal selected_symbol, selected_symbol_config
+
+        if orchestrator.engine_status != EngineStatus.STOPPED:
+            return ActionResponse(
+                ok=False,
+                message="引擎运行中禁止切换交易标的，请先停止引擎",
+                data={"engine_status": orchestrator.engine_status.value},
+            )
+
+        symbol = payload.symbol.strip().upper()
+        if not symbol:
+            raise HTTPException(status_code=400, detail="symbol 不能为空")
+
+        await refresh_top10_candidates(force_refresh=payload.force_refresh)
+        symbol_cfg = top10_symbol_map.get(symbol)
+        if symbol_cfg is None:
+            raise HTTPException(status_code=400, detail="symbol 不在当前 Top10 候选中")
+
+        selected_symbol = symbol
+        selected_symbol_config = symbol_cfg
+        orchestrator.set_selected_symbol(symbol_cfg)
+
+        return ActionResponse(
+            ok=True,
+            message=f"已选择交易标的：{symbol}",
+            data={
+                "selected_symbol": selected_symbol,
+                "top10_candidates": top10_candidates,
+                "updated_at": top10_updated_at,
+            },
         )
 
     @app.post("/api/runtime/order-execution", response_model=ActionResponse)
@@ -213,6 +345,8 @@ def create_app(config: AppConfig) -> FastAPI:
 
     @app.post("/api/engine/start", response_model=ActionResponse)
     async def start_engine() -> ActionResponse:
+        if selected_symbol_config is None:
+            return ActionResponse(ok=False, message="请先在下单页选择一个 Top10 交易标的")
         started = await orchestrator.start()
         if started:
             return ActionResponse(ok=True, message="引擎已启动")
