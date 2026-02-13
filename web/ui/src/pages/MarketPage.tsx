@@ -45,6 +45,13 @@ function toNominalSpreadPct(row: MarketTopSpreadRow): number {
   return (row.grossNominalSpread / row.referenceMid) * 100;
 }
 
+function toNetNominalSpreadPct(row: MarketTopSpreadRow): number {
+  if (!Number.isFinite(row.referenceMid) || row.referenceMid <= 0) {
+    return 0;
+  }
+  return (row.netNominalSpread / row.referenceMid) * 100;
+}
+
 export default function MarketPage() {
   const [result, setResult] = useState<MarketTopSpreadsResponse>(EMPTY_RESULT);
   const [loading, setLoading] = useState(true);
@@ -129,7 +136,7 @@ export default function MarketPage() {
         </div>
 
         <p className="hint">
-          展示口径已统一为百分比：实际价差(%) 使用可执行价差百分比；名义价差(%) = 名义价差绝对值 / 参考中间价 × 100。
+          展示口径已统一为百分比：实际价差(%) 使用可执行价差百分比；名义价差(%) 与净名义价差(%) 均按参考中间价换算。
         </p>
         <p className="hint">
           最近刷新 {formatTimestamp(result.updatedAt)}，扫描周期约 {result.scanIntervalSec} 秒，
@@ -153,12 +160,13 @@ export default function MarketPage() {
                 <th>实际价差(%)</th>
                 <th>有效杠杆</th>
                 <th>名义价差(%)</th>
+                <th>净名义价差(%)</th>
               </tr>
             </thead>
             <tbody>
               {topRows.length === 0 ? (
                 <tr>
-                  <td colSpan={5} className="empty-cell">
+                  <td colSpan={6} className="empty-cell">
                     暂无行情数据
                   </td>
                 </tr>
@@ -175,6 +183,9 @@ export default function MarketPage() {
                     </td>
                     <td data-label="名义价差(%)">
                       <strong>{formatSigned(toNominalSpreadPct(row), 4)}%</strong>
+                    </td>
+                    <td data-label="净名义价差(%)">
+                      <strong>{formatSigned(toNetNominalSpreadPct(row), 4)}%</strong>
                     </td>
                   </tr>
                 ))

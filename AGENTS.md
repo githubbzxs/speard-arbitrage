@@ -147,6 +147,11 @@
   - Impact：`web/ui/src/pages/MarketPage.tsx`、`web/ui/src/pages/TradePage.tsx`。
   - Verify：`cd web/ui && npm run build`，并确认页面仅显示 `%` 口径，且不再出现方向、买卖价、`bps`、`paradex/grvt market` 文案。
 
+- [2026-02-13] 行情页补回净名义价差百分比列
+  - Why：对齐“名义价差和净名义价差都按百分比显示”的交互要求，避免仅展示单列名义价差。
+  - Impact：`web/ui/src/pages/MarketPage.tsx`。
+  - Verify：`cd web/ui && npm run build`，并确认 Top10 表格包含 `名义价差(%)` 与 `净名义价差(%)` 两列。
+
 ## Commands
 - 后端测试：`python -m pytest backend/tests`
 - 后端启动：`python backend/main.py`
