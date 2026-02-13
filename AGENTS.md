@@ -7,6 +7,11 @@
 - 数据存储：SQLite + CSV。
 
 ## Decisions
+- [2026-02-13] 开仓主腿改为 Paradex taker，取消 Paradex post-only maker
+  - Why：Paradex 侧为 0 手续费时，优先吃单可提高成交确定性与刷量效率，避免 maker 挂单不成交导致机会流失。
+  - Impact：`backend/arbbot/strategy/execution_engine.py`、`backend/tests/test_execution_engine_order_gate.py`。
+  - Verify：`python -m pytest backend/tests/test_execution_engine_order_gate.py`。
+
 - [2026-02-13] 凭证配置改为后端持久化（SQLite）
   - Why：需要在网页填写 API Key 后可在服务端保留状态，避免仅前端本地存储。
   - Impact：`backend/arbbot/storage/credentials_repository.py`、`backend/arbbot/web/api.py`、`web/ui/src/App.tsx`、`web/ui/src/api/client.ts`。

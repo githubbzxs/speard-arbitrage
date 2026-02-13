@@ -226,41 +226,40 @@ class ExecutionEngine:
         failed = 0
         order_ids: list[str] = []
 
-        maker_side, hedge_side = self._resolve_sides(signal.direction)
-        maker_price = paradex_bid if maker_side == TradeSide.BUY else paradex_ask
+        paradex_taker_side, hedge_side = self._resolve_sides(signal.direction)
+        fallback_price = paradex_ask if paradex_taker_side == TradeSide.BUY else paradex_bid
 
         for qty in signal.batches:
-            maker_req = OrderRequest(
+            paradex_req = OrderRequest(
                 exchange=ExchangeName.PARADEX,
                 symbol=symbol_cfg.symbol,
-                side=maker_side,
+                side=paradex_taker_side,
                 quantity=qty,
-                order_type="limit",
-                price=maker_price,
-                post_only=True,
-                tag="open-maker",
+                order_type="market",
+                reduce_only=False,
+                tag="open-taker",
             )
             attempted += 1
-            maker_ack = await self._submit(maker_req)
-            if not maker_ack.success or maker_ack.filled_quantity <= 0:
+            paradex_ack = await self._submit(paradex_req)
+            if not paradex_ack.success or paradex_ack.filled_quantity <= 0:
                 failed += 1
                 continue
 
             success += 1
-            order_ids.append(maker_ack.order_id)
+            order_ids.append(paradex_ack.order_id)
             self.position_manager.apply_fill(
                 TradeFill(
-                    exchange=maker_ack.exchange,
+                    exchange=paradex_ack.exchange,
                     symbol=symbol_cfg.symbol,
-                    side=maker_ack.side,
-                    quantity=maker_ack.filled_quantity,
-                    price=maker_ack.avg_price or maker_price,
-                    order_id=maker_ack.order_id,
-                    tag="open-maker",
+                    side=paradex_ack.side,
+                    quantity=paradex_ack.filled_quantity,
+                    price=paradex_ack.avg_price or fallback_price,
+                    order_id=paradex_ack.order_id,
+                    tag="open-taker",
                 )
             )
 
-            hedge_qty = maker_ack.filled_quantity
+            hedge_qty = paradex_ack.filled_quantity
             hedge_req = OrderRequest(
                 exchange=ExchangeName.GRVT,
                 symbol=symbol_cfg.symbol,
@@ -284,7 +283,7 @@ class ExecutionEngine:
                     symbol=symbol_cfg.symbol,
                     side=hedge_ack.side,
                     quantity=hedge_ack.filled_quantity,
-                    price=hedge_ack.avg_price or maker_price,
+                    price=hedge_ack.avg_price or fallback_price,
                     order_id=hedge_ack.order_id,
                     tag="open-hedge",
                 )
