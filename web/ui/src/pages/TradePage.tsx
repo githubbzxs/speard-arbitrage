@@ -346,7 +346,7 @@ export default function TradePage() {
   };
 
   return (
-    <div className="page-grid">
+    <div className="page-grid trade-page-grid">
       {errorMessage ? <div className="banner banner-error">{errorMessage}</div> : null}
       {marketError ? <div className="banner banner-error">{marketError}</div> : null}
       {actionMessage ? <div className="banner banner-success">{actionMessage}</div> : null}

@@ -212,6 +212,11 @@
   - Impact：`web/ui/src/pages/TradePage.tsx`、`web/ui/src/styles.css`。
   - Verify：`cd web/ui && npm run build`，并在 `/trade` 验证“左列行情表 + 右列策略控制/仓位明细”比例稳定。
 
+- [2026-02-13] 行情/下单页改为页面级紧凑密度（保留结构不重排）
+  - Why：用户希望“一次搞定”并仅缩小空白与卡片/表格占用，不接受再次大幅重排布局。
+  - Impact：`web/ui/src/pages/TradePage.tsx`、`web/ui/src/styles.css`。
+  - Verify：`cd web/ui && npm run build`，并确认 `/trade` 在桌面端显示更紧凑、移动端仍保持单列可读。
+
 ## Commands
 - 后端测试：`python -m pytest backend/tests`
 - 后端启动：`python backend/main.py`

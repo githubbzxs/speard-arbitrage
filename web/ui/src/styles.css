@@ -385,6 +385,105 @@ body {
   padding: 16px;
 }
 
+.trade-page-grid {
+  gap: 12px;
+}
+
+.trade-page-grid .dashboard-grid {
+  grid-template-columns: minmax(0, 1.9fr) minmax(300px, 1fr);
+  gap: 12px;
+}
+
+.trade-page-grid .dashboard-main-column,
+.trade-page-grid .dashboard-side-column {
+  gap: 12px;
+}
+
+.trade-page-grid .overview-panel,
+.trade-page-grid .symbol-panel,
+.trade-page-grid .control-panel,
+.trade-page-grid .positions-panel,
+.trade-page-grid .event-panel {
+  padding: 14px;
+}
+
+.trade-page-grid .panel-title {
+  margin-bottom: 10px;
+  gap: 8px;
+}
+
+.trade-page-grid .panel-title h2 {
+  font-size: 17px;
+}
+
+.trade-page-grid .panel-title small {
+  font-size: 12px;
+}
+
+.trade-page-grid .overview-grid {
+  gap: 10px;
+}
+
+.trade-page-grid .metric-card {
+  padding: 12px;
+}
+
+.trade-page-grid .metric-card p {
+  margin: 8px 0 3px;
+  font-size: 24px;
+}
+
+.trade-page-grid table {
+  min-width: 820px;
+}
+
+.trade-page-grid thead th {
+  font-size: 11px;
+  padding: 8px 7px;
+}
+
+.trade-page-grid tbody td {
+  padding: 8px 7px;
+  font-size: 13px;
+}
+
+.trade-page-grid .empty-cell {
+  padding: 22px 10px;
+}
+
+.trade-page-grid .btn {
+  padding: 9px 11px;
+  font-size: 13px;
+}
+
+.trade-page-grid .form-block {
+  margin-top: 12px;
+  gap: 8px;
+}
+
+.trade-page-grid .inline-form,
+.trade-page-grid .trade-selection-flow,
+.trade-page-grid .trade-step-card,
+.trade-page-grid .trade-apply-row {
+  gap: 6px;
+}
+
+.trade-page-grid .trade-step-card {
+  padding: 8px;
+}
+
+.trade-page-grid select,
+.trade-page-grid input {
+  padding: 8px 9px;
+  font-size: 13px;
+}
+
+.trade-page-grid .hint,
+.trade-page-grid .form-error,
+.trade-page-grid .form-success {
+  font-size: 12px;
+}
+
 .table-wrap {
   width: 100%;
   overflow-x: auto;
@@ -928,6 +1027,15 @@ input:focus {
   .dashboard-grid {
     grid-template-columns: 1fr;
   }
+
+  .trade-page-grid .dashboard-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .trade-page-grid .dashboard-main-column,
+  .trade-page-grid .dashboard-side-column {
+    gap: 10px;
+  }
 }
 
 @media (max-width: 760px) {
@@ -1001,6 +1109,24 @@ input:focus {
     text-align: center;
     padding: 24px 10px;
   }
+
+  .trade-page-grid .overview-panel,
+  .trade-page-grid .symbol-panel,
+  .trade-page-grid .control-panel,
+  .trade-page-grid .positions-panel,
+  .trade-page-grid .event-panel {
+    padding: 12px;
+  }
+
+  .trade-page-grid .panel-title h2 {
+    font-size: 16px;
+  }
+
+  .trade-page-grid .responsive-table tbody tr {
+    gap: 6px;
+    margin-bottom: 8px;
+    padding: 8px;
+  }
 }
 
 @media (max-width: 640px) {
@@ -1058,5 +1184,23 @@ input:focus {
   .tab-item {
     font-size: 12px;
     padding: 8px 6px;
+  }
+
+  .trade-page-grid {
+    gap: 10px;
+  }
+
+  .trade-page-grid .overview-grid {
+    gap: 8px;
+  }
+
+  .trade-page-grid .metric-card p {
+    font-size: 22px;
+  }
+
+  .trade-page-grid .inline-form,
+  .trade-page-grid .trade-symbol-select-form,
+  .trade-page-grid .trade-apply-row {
+    grid-template-columns: 1fr;
   }
 }
