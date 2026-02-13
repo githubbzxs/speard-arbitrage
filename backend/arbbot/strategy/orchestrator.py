@@ -22,6 +22,7 @@ from ..models import (
     SpreadSignal,
     StrategyMode,
     SymbolSnapshot,
+    TradeFill,
     TradeSide,
     utc_iso,
 )
@@ -30,6 +31,7 @@ from ..storage import CsvLogger, Repository
 from .execution_engine import ExecutionEngine
 from .modes import ModeController
 from .order_book_manager import OrderBookManager
+from .performance_tracker import PerformanceTracker
 from .position_manager import PositionManager
 from .spread_engine import SpreadEngine
 
@@ -79,6 +81,7 @@ class ArbitrageOrchestrator:
             position_manager=self.position_manager,
             strategy_cfg=config.strategy,
             live_order_enabled=config.runtime.live_order_enabled,
+            on_fill=self._handle_trade_fill,
         )
 
         self.repository = Repository(config.storage.sqlite_path)
@@ -91,6 +94,14 @@ class ArbitrageOrchestrator:
         self._symbol_snapshots: dict[str, SymbolSnapshot] = {}
         self._event_memory: deque[dict[str, Any]] = deque(maxlen=500)
         self._selected_symbol: SymbolConfig | None = None
+        self.performance_tracker = PerformanceTracker()
+        self._balances: dict[str, dict[str, Any]] = {
+            "paradex": self._empty_balance_summary("init"),
+            "grvt": self._empty_balance_summary("init"),
+        }
+        self._balance_refresh_interval_sec = 10
+        self._last_balance_refresh_monotonic = 0.0
+        self._balance_lock = asyncio.Lock()
 
         self._stop_event = asyncio.Event()
         self._tasks: list[asyncio.Task] = []
@@ -128,6 +139,11 @@ class ArbitrageOrchestrator:
 
                 self.engine_status = EngineStatus.RUNNING
                 self.started_at = utc_iso()
+                await self._refresh_balances(force=True)
+                self.performance_tracker.reset(
+                    started_at=self.started_at,
+                    initial_equity=self._total_equity_from_balances(),
+                )
                 await self._emit_event(EventLevel.INFO, "engine", "套利引擎已启动")
                 return True
             except Exception as exc:
@@ -349,6 +365,11 @@ class ArbitrageOrchestrator:
                 self._symbol_snapshots[symbol] = snapshot
                 self.repository.add_symbol_snapshot(snapshot)
                 self.csv_logger.log_snapshot(snapshot)
+                self.performance_tracker.on_mark(
+                    symbol=symbol,
+                    paradex_mid=snapshot.paradex_mid,
+                    grvt_mid=snapshot.grvt_mid,
+                )
 
                 await self._broadcast({"type": "symbol", "data": snapshot.to_dict()})
 
@@ -412,11 +433,94 @@ class ArbitrageOrchestrator:
     def unregister_ws_queue(self, queue: asyncio.Queue) -> None:
         self._ws_queues.discard(queue)
 
+    def _handle_trade_fill(self, fill: TradeFill) -> None:
+        self.repository.add_trade(fill)
+        self.csv_logger.log_trade(fill)
+        self.performance_tracker.on_fill(fill)
+
+    @staticmethod
+    def _empty_balance_summary(source: str) -> dict[str, Any]:
+        return {
+            "available": False,
+            "source": source,
+            "currency": "",
+            "total_equity": 0.0,
+            "available_balance": 0.0,
+            "margin_used": 0.0,
+            "updated_at": utc_iso(),
+        }
+
+    async def _refresh_balances(self, force: bool = False) -> None:
+        if not force:
+            elapsed = time.monotonic() - self._last_balance_refresh_monotonic
+            if elapsed < self._balance_refresh_interval_sec:
+                return
+
+        async with self._balance_lock:
+            if not force:
+                elapsed = time.monotonic() - self._last_balance_refresh_monotonic
+                if elapsed < self._balance_refresh_interval_sec:
+                    return
+
+            balances: dict[str, dict[str, Any]] = {}
+            for name, adapter in (("paradex", self.paradex), ("grvt", self.grvt)):
+                try:
+                    payload = await adapter.fetch_balance_summary()
+                    balances[name] = payload if isinstance(payload, dict) else self._empty_balance_summary("invalid")
+                except Exception:
+                    balances[name] = self._empty_balance_summary("error")
+
+            self._balances = balances
+            self._last_balance_refresh_monotonic = time.monotonic()
+
+    def _total_equity_from_balances(self) -> Decimal:
+        total = Decimal("0")
+        for payload in self._balances.values():
+            if not isinstance(payload, dict):
+                continue
+            try:
+                total += Decimal(str(payload.get("total_equity", 0) or 0))
+            except Exception:
+                continue
+        return total
+
+    def _positions_summary(self) -> dict[str, Any]:
+        snapshot = self.position_manager.snapshot()
+        rows: list[dict[str, Any]] = []
+        total_net = Decimal("0")
+        for symbol, state in sorted(snapshot.items()):
+            try:
+                paradex_pos = Decimal(str(state.get("paradex", "0") or "0"))
+                grvt_pos = Decimal(str(state.get("grvt", "0") or "0"))
+                net_exposure = Decimal(str(state.get("net_exposure", "0") or "0"))
+            except Exception:
+                paradex_pos = Decimal("0")
+                grvt_pos = Decimal("0")
+                net_exposure = Decimal("0")
+
+            total_net += net_exposure
+            rows.append(
+                {
+                    "symbol": symbol,
+                    "paradex_position": float(paradex_pos),
+                    "grvt_position": float(grvt_pos),
+                    "net_exposure": float(net_exposure),
+                }
+            )
+
+        return {
+            "total_net_exposure": float(total_net),
+            "by_symbol": rows,
+        }
+
     async def get_status(self) -> dict[str, Any]:
         active_symbols = len(self._symbol_snapshots)
         consistency_ok_count = sum(1 for ok in self._consistency_ok.values() if ok)
         bucket_stats = await self.rate_limiter.snapshot()
         net_exposure = sum(snapshot.net_position for snapshot in self._symbol_snapshots.values())
+        await self._refresh_balances(force=False)
+        performance = self.performance_tracker.snapshot()
+        positions_summary = self._positions_summary()
 
         normal_count = 0
         warning_count = 0
@@ -442,7 +546,10 @@ class ArbitrageOrchestrator:
             "ws_ok": self.ws_supervisor.is_ok(),
             "health_ok": self.health_guard.can_open(),
             "net_exposure": float(net_exposure),
-            "daily_volume": 0.0,
+            "daily_volume": float(performance.get("run_turnover_usd", 0.0)),
+            "performance": performance,
+            "balances": self._balances,
+            "positions_summary": positions_summary,
             "risk_counts": {
                 "normal": normal_count,
                 "warning": warning_count,

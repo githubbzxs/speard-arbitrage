@@ -62,8 +62,8 @@ class RuntimeMarketDataRequest(BaseModel):
 
 
 class TradeSelectionRequest(BaseModel):
-    symbol: str = Field(description="交易标的（必须来自 Top10）")
-    force_refresh: bool = Field(default=False, description="是否强制刷新 Top10 后再校验")
+    symbol: str = Field(description="交易标的（必须来自当前候选列表）")
+    force_refresh: bool = Field(default=False, description="是否强制刷新候选列表后再校验")
 
 
 def create_app(config: AppConfig) -> FastAPI:
@@ -72,7 +72,7 @@ def create_app(config: AppConfig) -> FastAPI:
     credentials_repository = CredentialsRepository(config.storage.sqlite_path)
     credentials_validator = CredentialsValidator(config)
     market_scanner = NominalSpreadScanner(config=config, scan_interval_sec=60)
-    top_limit = 10
+    candidate_limit = 0
     selected_symbol = ""
     selected_symbol_config: SymbolConfig | None = None
     top10_candidates: list[dict[str, Any]] = []
@@ -121,7 +121,7 @@ def create_app(config: AppConfig) -> FastAPI:
             base_asset=base_asset,
             quote_asset=quote_asset,
             recommended_leverage=2,
-            leverage_note="Top10 候选标的",
+            leverage_note="候选标的",
             enabled=True,
         )
 
@@ -157,6 +157,8 @@ def create_app(config: AppConfig) -> FastAPI:
                     "tradable_edge_bps": parse_float(raw_row.get("tradable_edge_bps")),
                     "gross_nominal_spread": parse_float(raw_row.get("gross_nominal_spread")),
                     "zscore": parse_float(raw_row.get("zscore")),
+                    "spread_speed_pct_per_min": parse_float(raw_row.get("spread_speed_pct_per_min")),
+                    "spread_volatility_pct": parse_float(raw_row.get("spread_volatility_pct")),
                 }
             )
 
@@ -180,7 +182,7 @@ def create_app(config: AppConfig) -> FastAPI:
         timeout_sec: float | None = None,
     ) -> dict[str, Any]:
         hydrate_runtime_credentials_from_saved()
-        fetch_coro = market_scanner.get_top_spreads(limit=top_limit, force_refresh=force_refresh)
+        fetch_coro = market_scanner.get_spreads(limit=candidate_limit, force_refresh=force_refresh)
         if timeout_sec is not None and timeout_sec > 0:
             payload = await asyncio.wait_for(fetch_coro, timeout=timeout_sec)
         else:
@@ -288,11 +290,24 @@ def create_app(config: AppConfig) -> FastAPI:
 
     @app.get("/api/market/top-spreads")
     async def get_market_top_spreads(
-        limit: int = 10,
+        limit: int = 0,
         force_refresh: bool = False,
     ) -> dict[str, Any]:
         hydrate_runtime_credentials_from_saved()
-        payload = await market_scanner.get_top_spreads(
+        payload = await market_scanner.get_spreads(
+            limit=limit,
+            force_refresh=force_refresh,
+        )
+        apply_top10_payload(payload, reconcile_selected=False)
+        return payload
+
+    @app.get("/api/market/spreads")
+    async def get_market_spreads(
+        limit: int = 0,
+        force_refresh: bool = False,
+    ) -> dict[str, Any]:
+        hydrate_runtime_credentials_from_saved()
+        payload = await market_scanner.get_spreads(
             limit=limit,
             force_refresh=force_refresh,
         )
@@ -304,6 +319,7 @@ def create_app(config: AppConfig) -> FastAPI:
         if not force_refresh and top10_candidates:
             return {
                 "selected_symbol": selected_symbol,
+                "candidates": top10_candidates,
                 "top10_candidates": top10_candidates,
                 "updated_at": top10_updated_at,
             }
@@ -312,13 +328,14 @@ def create_app(config: AppConfig) -> FastAPI:
             await refresh_top10_candidates(
                 force_refresh=force_refresh,
                 reconcile_selected=True,
-                timeout_sec=6 if not force_refresh else 12,
+                timeout_sec=20 if not force_refresh else 30,
             )
         except asyncio.TimeoutError:
             pass
 
         return {
             "selected_symbol": selected_symbol,
+            "candidates": top10_candidates,
             "top10_candidates": top10_candidates,
             "updated_at": top10_updated_at,
         }
@@ -342,14 +359,14 @@ def create_app(config: AppConfig) -> FastAPI:
             await refresh_top10_candidates(
                 force_refresh=payload.force_refresh,
                 reconcile_selected=True,
-                timeout_sec=12,
+                timeout_sec=20,
             )
         except asyncio.TimeoutError:
             if not top10_symbol_map:
-                raise HTTPException(status_code=504, detail="Top10 候选加载超时，请稍后重试")
+                raise HTTPException(status_code=504, detail="候选列表加载超时，请稍后重试")
         symbol_cfg = top10_symbol_map.get(symbol)
         if symbol_cfg is None:
-            raise HTTPException(status_code=400, detail="symbol 不在当前 Top10 候选中")
+            raise HTTPException(status_code=400, detail="symbol 不在当前候选列表中")
 
         selected_symbol = symbol
         selected_symbol_config = symbol_cfg
@@ -360,6 +377,7 @@ def create_app(config: AppConfig) -> FastAPI:
             message=f"已选择交易标的：{symbol}",
             data={
                 "selected_symbol": selected_symbol,
+                "candidates": top10_candidates,
                 "top10_candidates": top10_candidates,
                 "updated_at": top10_updated_at,
             },
@@ -446,7 +464,7 @@ def create_app(config: AppConfig) -> FastAPI:
     @app.post("/api/engine/start", response_model=ActionResponse)
     async def start_engine() -> ActionResponse:
         if selected_symbol_config is None:
-            return ActionResponse(ok=False, message="请先在下单页选择一个 Top10 交易标的")
+            return ActionResponse(ok=False, message="请先在下单页选择并应用一个交易标的")
         started = await orchestrator.start()
         if started:
             return ActionResponse(ok=True, message="引擎已启动")
@@ -499,13 +517,13 @@ def create_app(config: AppConfig) -> FastAPI:
                 initial_market_payload = await refresh_top10_candidates(
                     force_refresh=False,
                     reconcile_selected=False,
-                    timeout_sec=6,
+                    timeout_sec=20,
                 )
             except asyncio.TimeoutError:
                 initial_market_payload = {
                     "updated_at": top10_updated_at or utc_iso(),
                     "scan_interval_sec": int(getattr(market_scanner, "_scan_interval_sec", 60)),
-                    "limit": top_limit,
+                    "limit": candidate_limit,
                     "configured_symbols": len(config.symbols),
                     "comparable_symbols": 0,
                     "executable_symbols": 0,
@@ -514,7 +532,7 @@ def create_app(config: AppConfig) -> FastAPI:
                     "skipped_count": 0,
                     "skipped_reasons": {},
                     "fee_profile": {"paradex_leg": "taker", "grvt_leg": "maker"},
-                    "last_error": "Top10 候选初始化较慢，后台加载中",
+                    "last_error": "候选列表初始化较慢，后台加载中",
                     "rows": [],
                 }
             await ws.send_json({"type": "market_top_spreads", "data": initial_market_payload})

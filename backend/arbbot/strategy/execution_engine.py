@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from decimal import Decimal
+from typing import Callable
 
 from ..config import StrategyConfig, SymbolConfig
 from ..models import (
@@ -30,12 +31,14 @@ class ExecutionEngine:
         position_manager: PositionManager,
         strategy_cfg: StrategyConfig,
         live_order_enabled: bool,
+        on_fill: Callable[[TradeFill], None] | None = None,
     ) -> None:
         self.adapters = adapters
         self.rate_limiter = rate_limiter
         self.position_manager = position_manager
         self.strategy_cfg = strategy_cfg
         self.live_order_enabled = live_order_enabled
+        self._on_fill = on_fill
 
     def set_live_order_enabled(self, enabled: bool) -> None:
         """动态切换真实下单开关。"""
@@ -131,7 +134,7 @@ class ExecutionEngine:
             if ack.success and ack.filled_quantity > 0:
                 success += 1
                 order_ids.append(ack.order_id)
-                self.position_manager.apply_fill(
+                self._record_fill(
                     TradeFill(
                         exchange=ack.exchange,
                         symbol=symbol_cfg.symbol,
@@ -258,7 +261,7 @@ class ExecutionEngine:
 
             success += 1
             order_ids.append(paradex_ack.order_id)
-            self.position_manager.apply_fill(
+            self._record_fill(
                 TradeFill(
                     exchange=paradex_ack.exchange,
                     symbol=symbol_cfg.symbol,
@@ -291,7 +294,7 @@ class ExecutionEngine:
 
             success += 1
             order_ids.append(hedge_ack.order_id)
-            self.position_manager.apply_fill(
+            self._record_fill(
                 TradeFill(
                     exchange=hedge_ack.exchange,
                     symbol=symbol_cfg.symbol,
@@ -394,6 +397,16 @@ class ExecutionEngine:
             ack.filled_quantity = request.quantity
 
         return ack
+
+    def _record_fill(self, fill: TradeFill) -> None:
+        self.position_manager.apply_fill(fill)
+        if self._on_fill is None:
+            return
+        try:
+            self._on_fill(fill)
+        except Exception:
+            # 成交回调失败不影响主交易流程，避免因统计异常阻塞执行。
+            return
 
     @staticmethod
     def _order_blocked_report(signal: SpreadSignal, message: str) -> ExecutionReport:

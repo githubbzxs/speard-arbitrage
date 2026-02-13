@@ -52,7 +52,7 @@ def _build_test_config(tmp_path: Path) -> AppConfig:
 def test_market_top_spreads_endpoint_returns_scanner_payload(tmp_path: Path) -> None:
     app = create_app(_build_test_config(tmp_path))
 
-    async def fake_get_top_spreads(
+    async def fake_get_spreads(
         limit: int,
         force_refresh: bool,
     ) -> dict[str, object]:
@@ -82,7 +82,7 @@ def test_market_top_spreads_endpoint_returns_scanner_payload(tmp_path: Path) -> 
             ],
         }
 
-    app.state.market_scanner.get_top_spreads = fake_get_top_spreads
+    app.state.market_scanner.get_spreads = fake_get_spreads
 
     with TestClient(app) as client:
         response = client.get("/api/market/top-spreads?limit=7&force_refresh=true")
@@ -102,7 +102,7 @@ def test_market_top_spreads_hydrate_saved_credentials_before_scan(tmp_path: Path
     config = _build_test_config(tmp_path)
     app = create_app(config)
 
-    async def fake_get_top_spreads(
+    async def fake_get_spreads(
         limit: int,
         force_refresh: bool,
     ) -> dict[str, object]:
@@ -127,7 +127,7 @@ def test_market_top_spreads_hydrate_saved_credentials_before_scan(tmp_path: Path
             "rows": [],
         }
 
-    app.state.market_scanner.get_top_spreads = fake_get_top_spreads
+    app.state.market_scanner.get_spreads = fake_get_spreads
 
     with TestClient(app) as client:
         client.post(
@@ -143,3 +143,35 @@ def test_market_top_spreads_hydrate_saved_credentials_before_scan(tmp_path: Path
         response = client.get("/api/market/top-spreads?limit=1")
 
     assert response.status_code == 200
+
+
+def test_market_spreads_alias_endpoint(tmp_path: Path) -> None:
+    app = create_app(_build_test_config(tmp_path))
+
+    async def fake_get_spreads(limit: int, force_refresh: bool) -> dict[str, object]:
+        assert limit == 0
+        assert force_refresh is False
+        return {
+            "updated_at": "2026-02-13T00:00:00+00:00",
+            "scan_interval_sec": 300,
+            "limit": 0,
+            "configured_symbols": 10,
+            "comparable_symbols": 2,
+            "executable_symbols": 2,
+            "scanned_symbols": 2,
+            "total_symbols": 2,
+            "skipped_count": 0,
+            "skipped_reasons": {},
+            "fee_profile": {"paradex_leg": "taker", "grvt_leg": "maker"},
+            "last_error": None,
+            "rows": [{"symbol": "BTC-PERP"}, {"symbol": "ETH-PERP"}],
+        }
+
+    app.state.market_scanner.get_spreads = fake_get_spreads
+
+    with TestClient(app) as client:
+        response = client.get("/api/market/spreads")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["total_symbols"] == 2

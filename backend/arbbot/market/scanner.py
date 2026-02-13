@@ -23,8 +23,9 @@ from ..config import AppConfig
 from ..models import utc_iso
 
 DEFAULT_SCAN_INTERVAL_SEC = 300
-DEFAULT_TOP_LIMIT = 10
-MAX_TOP_LIMIT = 100
+DEFAULT_TOP_LIMIT = 200
+MAX_TOP_LIMIT = 2000
+DEFAULT_SPEED_WINDOW_SEC = 600
 
 # 官方兜底费率（当接口字段缺失时使用）：
 # Paradex: https://docs.paradex.trade/risk/fees-and-discounts
@@ -171,7 +172,7 @@ class NominalSpreadScanner:
         default_limit: int = DEFAULT_TOP_LIMIT,
     ) -> None:
         self._config = config
-        self._scan_interval_sec = max(60, int(scan_interval_sec))
+        self._scan_interval_sec = max(5, int(scan_interval_sec))
         self._default_limit = max(1, min(int(default_limit), MAX_TOP_LIMIT))
 
         self._rows: list[dict[str, Any]] = []
@@ -185,6 +186,35 @@ class NominalSpreadScanner:
         self._lock = asyncio.Lock()
         self._history_by_symbol: dict[str, deque[Decimal]] = {}
         self._history_seeded_symbols: set[str] = set()
+        self._edge_pct_history_by_symbol: dict[str, deque[tuple[float, Decimal]]] = {}
+
+    def _edge_pct_history_for(self, symbol: str) -> deque[tuple[float, Decimal]]:
+        return self._edge_pct_history_by_symbol.setdefault(symbol, deque(maxlen=240))
+
+    def _compute_spread_speed_metrics(self, symbol: str, edge_pct: Decimal) -> tuple[Decimal, Decimal, int]:
+        now_ts = time.time()
+        history = self._edge_pct_history_for(symbol)
+        history.append((now_ts, edge_pct))
+
+        # 仅保留最近窗口内样本，减少陈旧数据对速度与波动率的干扰。
+        while history and (now_ts - history[0][0]) > DEFAULT_SPEED_WINDOW_SEC:
+            history.popleft()
+
+        samples = list(history)
+        sample_count = len(samples)
+        if sample_count < 2:
+            return Decimal("0"), Decimal("0"), sample_count
+
+        start_ts, start_val = samples[0]
+        end_ts, end_val = samples[-1]
+        elapsed_sec = max(end_ts - start_ts, 1e-6)
+        speed_per_min = (end_val - start_val) / Decimal(str(elapsed_sec)) * Decimal("60")
+
+        volatility = Decimal("0")
+        if sample_count >= 2:
+            volatility = Decimal(str(pstdev([float(item[1]) for item in samples])))
+
+        return speed_per_min, volatility, sample_count
 
     def _history_capacity(self) -> int:
         return max(self._config.strategy.ma_window, self._config.strategy.std_window) * 2
@@ -260,22 +290,24 @@ class NominalSpreadScanner:
         limit: int = DEFAULT_TOP_LIMIT,
         force_refresh: bool = False,
     ) -> dict[str, Any]:
-        resolved_limit = max(1, min(int(limit), MAX_TOP_LIMIT))
+        requested_limit = int(limit)
         await self._ensure_cache(force_refresh=force_refresh)
 
-        # 按需求仅展示 Z-score 为正的标的，避免负值信号进入候选列表。
-        positive_rows = [
-            item for item in self._rows if float(item.get("zscore", 0.0)) > 0.0
-        ]
-
         sorted_rows = sorted(
-            positive_rows,
+            self._rows,
             key=lambda item: (
+                abs(float(item.get("spread_speed_pct_per_min", 0.0))),
                 abs(float(item.get("zscore", 0.0))),
                 float(item.get("gross_nominal_spread", 0.0)),
             ),
             reverse=True,
         )
+        if requested_limit <= 0:
+            resolved_limit = len(sorted_rows)
+            output_rows = sorted_rows
+        else:
+            resolved_limit = max(1, min(requested_limit, MAX_TOP_LIMIT))
+            output_rows = sorted_rows[:resolved_limit]
 
         return {
             "updated_at": self._updated_at,
@@ -293,8 +325,15 @@ class NominalSpreadScanner:
                 "grvt_leg": "maker",
             },
             "last_error": self._last_error or None,
-            "rows": sorted_rows[:resolved_limit],
+            "rows": output_rows,
         }
+
+    async def get_spreads(
+        self,
+        limit: int = 0,
+        force_refresh: bool = False,
+    ) -> dict[str, Any]:
+        return await self.get_top_spreads(limit=limit, force_refresh=force_refresh)
 
     async def _ensure_cache(self, force_refresh: bool) -> None:
         if not force_refresh and self._rows and (time.monotonic() - self._last_refresh_monotonic) < self._scan_interval_sec:
@@ -454,6 +493,10 @@ class NominalSpreadScanner:
             edge_grvt_to_para_bps = ((paradex_bid - grvt_ask) / reference_mid) * Decimal("10000")
         signed_edge_bps = edge_para_to_grvt_bps if edge_para_to_grvt_bps >= edge_grvt_to_para_bps else -edge_grvt_to_para_bps
         zscore = self._compute_zscore(symbol, signed_edge_bps)
+        spread_speed_pct_per_min, spread_volatility_pct, speed_samples = self._compute_spread_speed_metrics(
+            symbol=symbol,
+            edge_pct=tradable_edge_pct,
+        )
 
         effective_leverage = min(_sanitize_leverage(paradex_max_leverage), _sanitize_leverage(grvt_max_leverage))
 
@@ -499,6 +542,9 @@ class NominalSpreadScanner:
                     "grvt": grvt_fee_source,
                 },
                 "zscore": float(zscore),
+                "spread_speed_pct_per_min": float(spread_speed_pct_per_min),
+                "spread_volatility_pct": float(spread_volatility_pct),
+                "speed_samples": speed_samples,
                 "updated_at": utc_iso(),
             },
             None,

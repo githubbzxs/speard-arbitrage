@@ -16,7 +16,7 @@ import type {
   TradingMode
 } from "../types";
 
-const REQUEST_TIMEOUT_MS = 15000;
+const REQUEST_TIMEOUT_MS = 30000;
 const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL ?? "").trim();
 
 const PARADEX_FIELDS = ["l2_private_key", "l2_address"] as const;
@@ -245,7 +245,7 @@ function extractArray(value: unknown): unknown[] {
     return [];
   }
 
-  for (const key of ["items", "rows", "list", "data", "symbols", "events", "top10_candidates"]) {
+  for (const key of ["items", "rows", "list", "data", "symbols", "events", "top10_candidates", "candidates"]) {
     const candidate = record[key];
     if (Array.isArray(candidate)) {
       return candidate;
@@ -253,6 +253,64 @@ function extractArray(value: unknown): unknown[] {
   }
 
   return [];
+}
+
+function normalizePerformanceSummary(source: unknown): DashboardStatus["performance"] {
+  const record = toRecord(source) ?? {};
+  return {
+    runningSince: pickString(record, ["running_since", "runningSince"], ""),
+    runRealizedPnl: pickNumber(record, ["run_realized_pnl", "runRealizedPnl"], 0),
+    runUnrealizedPnl: pickNumber(record, ["run_unrealized_pnl", "runUnrealizedPnl"], 0),
+    runTotalPnl: pickNumber(record, ["run_total_pnl", "runTotalPnl"], 0),
+    runPnlPct: pickNumber(record, ["run_pnl_pct", "runPnlPct"], 0),
+    runTurnoverUsd: pickNumber(record, ["run_turnover_usd", "runTurnoverUsd"], 0),
+    runTradeCount: Math.max(0, pickNumber(record, ["run_trade_count", "runTradeCount"], 0)),
+    equityNow: pickNumber(record, ["equity_now", "equityNow"], 0),
+    equityPeak: pickNumber(record, ["equity_peak", "equityPeak"], 0),
+    drawdownPct: Math.max(0, pickNumber(record, ["drawdown_pct", "drawdownPct"], 0)),
+    maxDrawdownPct: Math.max(0, pickNumber(record, ["max_drawdown_pct", "maxDrawdownPct"], 0))
+  };
+}
+
+function normalizeExchangeBalance(source: unknown): DashboardStatus["balances"]["paradex"] {
+  const record = toRecord(source) ?? {};
+  return {
+    available: normalizeConfiguredFlag(record.available),
+    source: pickString(record, ["source"], "unknown"),
+    currency: pickString(record, ["currency"], ""),
+    totalEquity: pickNumber(record, ["total_equity", "totalEquity"], 0),
+    availableBalance: pickNumber(record, ["available_balance", "availableBalance"], 0),
+    marginUsed: pickNumber(record, ["margin_used", "marginUsed"], 0),
+    updatedAt: pickString(record, ["updated_at", "updatedAt"], "")
+  };
+}
+
+function normalizePositionsSummary(source: unknown): DashboardStatus["positionsSummary"] {
+  const record = toRecord(source) ?? {};
+  const bySymbol = extractArray(record.by_symbol ?? record.bySymbol)
+    .map((item) => {
+      const itemRecord = toRecord(item);
+      if (!itemRecord) {
+        return null;
+      }
+      const symbol = pickString(itemRecord, ["symbol"], "");
+      if (!symbol) {
+        return null;
+      }
+      return {
+        symbol,
+        paradexPosition: pickNumber(itemRecord, ["paradex_position", "paradexPosition"], 0),
+        grvtPosition: pickNumber(itemRecord, ["grvt_position", "grvtPosition"], 0),
+        netExposure: pickNumber(itemRecord, ["net_exposure", "netExposure"], 0)
+      };
+    })
+    .filter((item): item is DashboardStatus["positionsSummary"]["bySymbol"][number] => item !== null)
+    .sort((a, b) => a.symbol.localeCompare(b.symbol));
+
+  return {
+    totalNetExposure: pickNumber(record, ["total_net_exposure", "totalNetExposure"], 0),
+    bySymbol
+  };
 }
 
 export function normalizeStatus(data: unknown): DashboardStatus {
@@ -273,6 +331,10 @@ export function normalizeStatus(data: unknown): DashboardStatus {
     ? pickNumber(riskRecord, ["critical", "high"], 0)
     : pickNumber(record, ["risk_critical", "critical_count"], 0);
 
+  const performanceRecord = toRecord(record.performance) ?? toRecord(record.performance_summary);
+  const balancesRecord = toRecord(record.balances);
+  const positionsSummaryRecord = toRecord(record.positions_summary) ?? toRecord(record.positionsSummary);
+
   return {
     engineStatus: parseEngineStatus(pickString(record, ["engine_status", "engineStatus", "status"], DEFAULT_STATUS.engineStatus)),
     mode: parseMode(pickString(record, ["mode"], DEFAULT_STATUS.mode)),
@@ -283,6 +345,12 @@ export function normalizeStatus(data: unknown): DashboardStatus {
       warning: warningRisk,
       critical: criticalRisk
     },
+    performance: normalizePerformanceSummary(performanceRecord),
+    balances: {
+      paradex: normalizeExchangeBalance(balancesRecord?.paradex),
+      grvt: normalizeExchangeBalance(balancesRecord?.grvt)
+    },
+    positionsSummary: normalizePositionsSummary(positionsSummaryRecord),
     updatedAt: pickString(record, ["updated_at", "updatedAt", "ts", "timestamp"], new Date().toISOString())
   };
 }
@@ -534,6 +602,9 @@ function normalizeMarketSpreadRow(data: unknown): MarketTopSpreadRow | null {
     feeCostEstimate: pickNumber(record, ["fee_cost_estimate", "feeCostEstimate"], 0),
     netNominalSpread: pickNumber(record, ["net_nominal_spread", "netNominalSpread"], 0),
     zscore: pickNumber(record, ["zscore", "z_score", "zScore"], 0),
+    spreadSpeedPctPerMin: pickNumber(record, ["spread_speed_pct_per_min", "spreadSpeedPctPerMin"], 0),
+    spreadVolatilityPct: pickNumber(record, ["spread_volatility_pct", "spreadVolatilityPct"], 0),
+    speedSamples: Math.max(0, pickNumber(record, ["speed_samples", "speedSamples"], 0)),
     paradexFeeRate: pickNumber(record, ["paradex_fee_rate", "paradexFeeRate"], 0),
     grvtFeeRate: pickNumber(record, ["grvt_fee_rate", "grvtFeeRate"], 0),
     feeSource: {
@@ -569,8 +640,12 @@ export function normalizeMarketTopSpreads(data: unknown): MarketTopSpreadsRespon
   const rows = extractArray(record.rows)
     .map((item) => normalizeMarketSpreadRow(item))
     .filter((item): item is MarketTopSpreadRow => item !== null)
-    .filter((item) => item.zscore > 0)
-    .sort((a, b) => b.zscore - a.zscore || b.grossNominalSpread - a.grossNominalSpread);
+    .sort(
+      (a, b) =>
+        Math.abs(b.spreadSpeedPctPerMin) - Math.abs(a.spreadSpeedPctPerMin) ||
+        b.spreadVolatilityPct - a.spreadVolatilityPct ||
+        Math.abs(b.zscore) - Math.abs(a.zscore)
+    );
 
   const skippedReasonsRecord = toRecord(record.skipped_reasons) ?? toRecord(record.skippedReasons) ?? {};
   const normalizedSkippedReasons: Record<string, number> = {};
@@ -630,13 +705,16 @@ function normalizeTradeTopCandidate(data: unknown): TradeTopCandidate | null {
     tradableEdgePct: pickNumber(record, ["tradable_edge_pct", "tradableEdgePct"], 0),
     tradableEdgeBps: pickNumber(record, ["tradable_edge_bps", "tradableEdgeBps"], 0),
     grossNominalSpread: pickNumber(record, ["gross_nominal_spread", "grossNominalSpread"], 0),
-    zscore: pickNumber(record, ["zscore", "z_score", "zScore"], 0)
+    zscore: pickNumber(record, ["zscore", "z_score", "zScore"], 0),
+    spreadSpeedPctPerMin: pickNumber(record, ["spread_speed_pct_per_min", "spreadSpeedPctPerMin"], 0),
+    spreadVolatilityPct: pickNumber(record, ["spread_volatility_pct", "spreadVolatilityPct"], 0)
   };
 }
 
 export function normalizeTradeSelection(data: unknown): TradeSelection {
   const fallback: TradeSelection = {
     selectedSymbol: "",
+    candidates: [],
     top10Candidates: [],
     updatedAt: ""
   };
@@ -646,15 +724,20 @@ export function normalizeTradeSelection(data: unknown): TradeSelection {
     return fallback;
   }
 
-  const top10Candidates = extractArray(record.top10_candidates ?? record.top10Candidates)
+  const candidates = extractArray(record.candidates ?? record.top10_candidates ?? record.top10Candidates)
     .map((item) => normalizeTradeTopCandidate(item))
     .filter((item): item is TradeTopCandidate => item !== null)
-    .filter((item) => item.zscore > 0)
-    .sort((a, b) => b.zscore - a.zscore || b.tradableEdgePct - a.tradableEdgePct);
+    .sort(
+      (a, b) =>
+        Math.abs(b.spreadSpeedPctPerMin) - Math.abs(a.spreadSpeedPctPerMin) ||
+        b.spreadVolatilityPct - a.spreadVolatilityPct ||
+        Math.abs(b.zscore) - Math.abs(a.zscore)
+    );
 
   return {
     selectedSymbol: pickString(record, ["selected_symbol", "selectedSymbol"], ""),
-    top10Candidates,
+    candidates,
+    top10Candidates: candidates,
     updatedAt: pickString(record, ["updated_at", "updatedAt"], "")
   };
 }
@@ -873,7 +956,7 @@ export const apiClient = {
 
   async getMarketTopSpreads(options?: { limit?: number; forceRefresh?: boolean }): Promise<MarketTopSpreadsResponse> {
     const params = new URLSearchParams();
-    const limit = options?.limit ?? 10;
+    const limit = options?.limit ?? 0;
     const forceRefresh = options?.forceRefresh ?? false;
 
     params.set("limit", String(limit));
@@ -881,7 +964,12 @@ export const apiClient = {
       params.set("force_refresh", "true");
     }
 
-    const response = await requestJson<unknown>(`/api/market/top-spreads?${params.toString()}`);
-    return normalizeMarketTopSpreads(response);
+    try {
+      const response = await requestJson<unknown>(`/api/market/spreads?${params.toString()}`);
+      return normalizeMarketTopSpreads(response);
+    } catch {
+      const response = await requestJson<unknown>(`/api/market/top-spreads?${params.toString()}`);
+      return normalizeMarketTopSpreads(response);
+    }
   }
 };

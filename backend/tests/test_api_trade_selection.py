@@ -42,11 +42,11 @@ def _build_test_config(tmp_path: Path) -> AppConfig:
     )
 
 
-def _fake_top10_rows() -> dict[str, object]:
+def _fake_candidate_rows() -> dict[str, object]:
     return {
         "updated_at": "2026-02-13T00:00:00+00:00",
         "scan_interval_sec": 300,
-        "limit": 10,
+        "limit": 0,
         "configured_symbols": 10,
         "comparable_symbols": 10,
         "executable_symbols": 2,
@@ -79,15 +79,15 @@ def _fake_top10_rows() -> dict[str, object]:
     }
 
 
-def test_get_trade_selection_returns_top10_candidates(tmp_path: Path) -> None:
+def test_get_trade_selection_returns_candidates(tmp_path: Path) -> None:
     app = create_app(_build_test_config(tmp_path))
 
-    async def fake_get_top_spreads(limit: int, force_refresh: bool) -> dict[str, object]:
-        assert limit == 10
+    async def fake_get_spreads(limit: int, force_refresh: bool) -> dict[str, object]:
+        assert limit == 0
         assert force_refresh is False
-        return _fake_top10_rows()
+        return _fake_candidate_rows()
 
-    app.state.market_scanner.get_top_spreads = fake_get_top_spreads
+    app.state.market_scanner.get_spreads = fake_get_spreads
 
     with TestClient(app) as client:
         response = client.get("/api/trade/selection")
@@ -95,23 +95,25 @@ def test_get_trade_selection_returns_top10_candidates(tmp_path: Path) -> None:
     assert response.status_code == 200
     payload = response.json()
     assert payload["selected_symbol"] == ""
+    assert len(payload["candidates"]) == 2
+    assert payload["candidates"][0]["symbol"] == "BTC-PERP"
     assert len(payload["top10_candidates"]) == 2
     assert payload["top10_candidates"][0]["symbol"] == "BTC-PERP"
 
 
-def test_set_trade_selection_reject_symbol_outside_top10(tmp_path: Path) -> None:
+def test_set_trade_selection_reject_symbol_outside_candidates(tmp_path: Path) -> None:
     app = create_app(_build_test_config(tmp_path))
 
-    async def fake_get_top_spreads(limit: int, force_refresh: bool) -> dict[str, object]:
-        return _fake_top10_rows()
+    async def fake_get_spreads(limit: int, force_refresh: bool) -> dict[str, object]:
+        return _fake_candidate_rows()
 
-    app.state.market_scanner.get_top_spreads = fake_get_top_spreads
+    app.state.market_scanner.get_spreads = fake_get_spreads
 
     with TestClient(app) as client:
         response = client.post("/api/trade/selection", json={"symbol": "XRP-PERP"})
 
     assert response.status_code == 400
-    assert "Top10" in response.text
+    assert "候选" in response.text
 
 
 def test_start_engine_requires_trade_selection(tmp_path: Path) -> None:
@@ -126,16 +128,16 @@ def test_start_engine_requires_trade_selection(tmp_path: Path) -> None:
     assert "选择" in body["message"]
 
 
-def test_start_engine_after_selecting_top10_symbol(tmp_path: Path) -> None:
+def test_start_engine_after_selecting_symbol(tmp_path: Path) -> None:
     app = create_app(_build_test_config(tmp_path))
 
-    async def fake_get_top_spreads(limit: int, force_refresh: bool) -> dict[str, object]:
-        return _fake_top10_rows()
+    async def fake_get_spreads(limit: int, force_refresh: bool) -> dict[str, object]:
+        return _fake_candidate_rows()
 
     async def fake_start() -> bool:
         return True
 
-    app.state.market_scanner.get_top_spreads = fake_get_top_spreads
+    app.state.market_scanner.get_spreads = fake_get_spreads
     app.state.orchestrator.start = fake_start
 
     with TestClient(app) as client:
@@ -146,4 +148,3 @@ def test_start_engine_after_selecting_top10_symbol(tmp_path: Path) -> None:
     assert set_response.json()["ok"] is True
     assert start_response.status_code == 200
     assert start_response.json()["ok"] is True
-

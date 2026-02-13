@@ -6,11 +6,12 @@ import { useDashboard } from "../hooks/useDashboard";
 import type { MarketTopSpreadRow, MarketTopSpreadsResponse, SymbolParamsPayload, TradeSelection, TradingMode } from "../types";
 import { formatNumber, formatSigned, formatTimestamp } from "../utils/format";
 
-const TOP_LIMIT = 10;
+const MARKET_LIMIT = 0;
 const MARKET_REFRESH_INTERVAL_MS = 20000;
 
 const EMPTY_TRADE_SELECTION: TradeSelection = {
   selectedSymbol: "",
+  candidates: [],
   top10Candidates: [],
   updatedAt: ""
 };
@@ -18,7 +19,7 @@ const EMPTY_TRADE_SELECTION: TradeSelection = {
 const EMPTY_MARKET_RESULT: MarketTopSpreadsResponse = {
   updatedAt: "",
   scanIntervalSec: 300,
-  limit: TOP_LIMIT,
+  limit: MARKET_LIMIT,
   configuredSymbols: 0,
   comparableSymbols: 0,
   executableSymbols: 0,
@@ -145,7 +146,7 @@ export default function TradePage() {
       setSelectionMessage("");
       setFormError("");
     } catch (error) {
-      setFormError(`加载 Top10 交易候选失败：${getErrorMessage(error)}`);
+      setFormError(`加载交易候选失败：${getErrorMessage(error)}`);
     } finally {
       setSelectionLoading(false);
     }
@@ -163,7 +164,7 @@ export default function TradePage() {
     }
 
     try {
-      const response = await apiClient.getMarketTopSpreads({ limit: TOP_LIMIT, forceRefresh });
+      const response = await apiClient.getMarketTopSpreads({ limit: MARKET_LIMIT, forceRefresh });
       const normalized = normalizeMarketTopSpreads(response);
       setMarketResult(normalized);
       setMarketError("");
@@ -199,17 +200,17 @@ export default function TradePage() {
       setSelectedSymbol(tradeSelection.selectedSymbol);
       return;
     }
-    if (tradeSelection.top10Candidates.length > 0) {
+    if (tradeSelection.candidates.length > 0) {
       setSelectedSymbol((previous) => {
-        if (previous && tradeSelection.top10Candidates.some((item) => item.symbol === previous)) {
+        if (previous && tradeSelection.candidates.some((item) => item.symbol === previous)) {
           return previous;
         }
-        return tradeSelection.top10Candidates[0].symbol;
+        return tradeSelection.candidates[0].symbol;
       });
       return;
     }
     setSelectedSymbol("");
-  }, [tradeSelection.selectedSymbol, tradeSelection.top10Candidates]);
+  }, [tradeSelection.candidates, tradeSelection.selectedSymbol]);
 
   const selectedTradeSymbol = tradeSelection.selectedSymbol;
 
@@ -219,8 +220,8 @@ export default function TradePage() {
   );
 
   const selectedCandidate = useMemo(
-    () => tradeSelection.top10Candidates.find((item) => item.symbol === selectedSymbol) ?? null,
-    [selectedSymbol, tradeSelection.top10Candidates]
+    () => tradeSelection.candidates.find((item) => item.symbol === selectedSymbol) ?? null,
+    [selectedSymbol, tradeSelection.candidates]
   );
   const hasAppliedTradeSymbol = Boolean(selectedTradeSymbol);
   const needsApplySelection = Boolean(selectedSymbol) && selectedSymbol !== selectedTradeSymbol;
@@ -236,9 +237,12 @@ export default function TradePage() {
   const topRows = useMemo(
     () =>
       [...marketResult.rows]
-        .filter((row) => row.zscore > 0)
-        .sort((a, b) => b.zscore - a.zscore || toNominalSpreadPct(b) - toNominalSpreadPct(a))
-        .slice(0, TOP_LIMIT),
+        .sort(
+          (a, b) =>
+            Math.abs(b.spreadSpeedPctPerMin) - Math.abs(a.spreadSpeedPctPerMin) ||
+            b.spreadVolatilityPct - a.spreadVolatilityPct ||
+            Math.abs(b.zscore) - Math.abs(a.zscore)
+        ),
     [marketResult.rows]
   );
 
@@ -247,9 +251,9 @@ export default function TradePage() {
       return "行情加载中...";
     }
     if (topRows.length === 0) {
-      return "当前无满足条件的标的（仅展示 Z-score > 0）";
+      return "当前无可执行行情数据";
     }
-    return `仅展示 Z-score > 0，当前 ${topRows.length} 个标的`;
+    return `当前展示全量可比币对 ${topRows.length} 个`;
   }, [marketLoading, topRows.length]);
 
   const onModeSubmit = async (event: FormEvent<HTMLFormElement>) => {
@@ -265,7 +269,7 @@ export default function TradePage() {
 
   const onApplyTradeSymbol = async () => {
     if (!selectedSymbol.trim()) {
-      setFormError("请先在 Top10 候选中选择交易标的");
+      setFormError("请先在候选列表中选择交易标的");
       return;
     }
 
@@ -291,7 +295,7 @@ export default function TradePage() {
     event.preventDefault();
 
     if (!selectedTradeSymbol.trim()) {
-      setFormError("请先在 Top10 候选中选择并应用交易标的");
+      setFormError("请先在候选列表中选择并应用交易标的");
       return;
     }
 
@@ -334,7 +338,7 @@ export default function TradePage() {
 
   const onFlattenClick = async () => {
     if (!selectedTradeSymbol.trim()) {
-      setFormError("请先在 Top10 候选中选择并应用交易标的");
+      setFormError("请先在候选列表中选择并应用交易标的");
       return;
     }
     setFormError("");
@@ -361,21 +365,48 @@ export default function TradePage() {
             <small>模式 {status.mode}</small>
           </article>
           <article className="metric-card">
-            <h3>净敞口</h3>
-            <p>{formatSigned(status.netExposure, 2)}</p>
-            <small>USDT</small>
+            <h3>本次策略盈亏</h3>
+            <p>{formatSigned(status.performance.runTotalPnl, 2)}</p>
+            <small>
+              已实现 {formatSigned(status.performance.runRealizedPnl, 2)} / 未实现{" "}
+              {formatSigned(status.performance.runUnrealizedPnl, 2)}
+            </small>
           </article>
           <article className="metric-card">
-            <h3>风控计数</h3>
-            <p>{totalRiskCount}</p>
+            <h3>本次交易量</h3>
+            <p>{formatNumber(status.performance.runTurnoverUsd, 2)}</p>
+            <small>成交笔数 {status.performance.runTradeCount}</small>
+          </article>
+          <article className="metric-card">
+            <h3>当前回撤</h3>
+            <p>{formatSigned(status.performance.drawdownPct, 3)}%</p>
+            <small>最大回撤 {formatSigned(status.performance.maxDrawdownPct, 3)}%</small>
+          </article>
+          <article className="metric-card">
+            <h3>Paradex 余额</h3>
+            <p>{formatNumber(status.balances.paradex.totalEquity, 2)}</p>
             <small>
-              高风险 {status.riskCounts.critical} / 预警 {status.riskCounts.warning} / 正常 {status.riskCounts.normal}
+              可用 {formatNumber(status.balances.paradex.availableBalance, 2)} {status.balances.paradex.currency || ""}
             </small>
+          </article>
+          <article className="metric-card">
+            <h3>GRVT 余额</h3>
+            <p>{formatNumber(status.balances.grvt.totalEquity, 2)}</p>
+            <small>
+              可用 {formatNumber(status.balances.grvt.availableBalance, 2)} {status.balances.grvt.currency || ""}
+            </small>
+          </article>
+          <article className="metric-card">
+            <h3>仓位总览</h3>
+            <p>{formatSigned(status.positionsSummary.totalNetExposure, 4)}</p>
+            <small>覆盖币对 {status.positionsSummary.bySymbol.length} 个</small>
           </article>
           <article className="metric-card">
             <h3>连接状态</h3>
             <p className={wsStateClass(wsStatus.state)}>{wsStateLabel(wsStatus.state)}</p>
-            <small>{formatTimestamp(status.updatedAt)}</small>
+            <small>
+              风控总数 {totalRiskCount} / 更新时间 {formatTimestamp(status.updatedAt)}
+            </small>
           </article>
         </div>
       </section>
@@ -387,7 +418,7 @@ export default function TradePage() {
         </div>
 
         <div className="form-block">
-          <label htmlFor="trade-symbol-select">交易标的（仅 Top10 候选）</label>
+          <label htmlFor="trade-symbol-select">交易标的（全量候选）</label>
           <div className="trade-selection-flow">
             <div className="trade-step-card">
               <p className="trade-step-title">步骤 1：选择交易标的</p>
@@ -398,10 +429,10 @@ export default function TradePage() {
                   onChange={(event) => onTradeSymbolChange(event.target.value)}
                   disabled={isBusy || selectionSaving || selectionLoading}
                 >
-                  {tradeSelection.top10Candidates.length === 0 ? (
-                    <option value="">暂无 Top10 候选（先点击刷新 Top10）</option>
+                  {tradeSelection.candidates.length === 0 ? (
+                    <option value="">暂无候选（先点击刷新候选）</option>
                   ) : (
-                    tradeSelection.top10Candidates.map((item) => (
+                    tradeSelection.candidates.map((item) => (
                       <option key={item.symbol} value={item.symbol}>
                         {item.symbol}
                       </option>
@@ -417,7 +448,7 @@ export default function TradePage() {
                   }}
                   disabled={isBusy || selectionSaving || selectionLoading}
                 >
-                  {selectionLoading ? "刷新中..." : "刷新 Top10"}
+                  {selectionLoading ? "刷新中..." : "刷新候选"}
                 </button>
               </div>
             </div>
@@ -441,15 +472,17 @@ export default function TradePage() {
           </div>
 
           <p className="hint">
-            当前已应用交易标的：{selectedTradeSymbol || "未应用"}；当前选择：{selectedSymbol || "未选择"}。Top10 候选{" "}
-            {tradeSelection.top10Candidates.length} 个，
+            当前已应用交易标的：{selectedTradeSymbol || "未应用"}；当前选择：{selectedSymbol || "未选择"}。候选{" "}
+            {tradeSelection.candidates.length} 个，
             更新时间 {formatTimestamp(tradeSelection.updatedAt)}。
           </p>
           {!selectedTradeSymbol ? <p className="hint">请先完成“步骤 2 应用到引擎”，然后才能启动引擎。</p> : null}
           {needsApplySelection ? <p className="hint">你已切换交易标的，但还未应用，当前仍按旧标的运行。</p> : null}
           {selectedCandidate ? (
             <p className="hint">
-              候选口径：{formatSigned(selectedCandidate.tradableEdgePct, 4)}%，Z-score {formatSigned(selectedCandidate.zscore, 3)}
+              候选口径：{formatSigned(selectedCandidate.tradableEdgePct, 4)}%，Z-score {formatSigned(selectedCandidate.zscore, 3)}，
+              速度 {formatSigned(selectedCandidate.spreadSpeedPctPerMin, 4)}%/分钟，波动率{" "}
+              {formatNumber(selectedCandidate.spreadVolatilityPct, 4)}%
             </p>
           ) : null}
         </div>
@@ -561,11 +594,11 @@ export default function TradePage() {
       <section className="panel symbol-panel page-panel">
         <div className="panel-title">
           <h2>当前行情（单表）</h2>
-          <small>仅展示 Z-score &gt; 0</small>
+          <small>全量可比币对</small>
         </div>
         <p className="hint">
           最近刷新 {formatTimestamp(marketResult.updatedAt)}，扫描周期约 {marketResult.scanIntervalSec} 秒，
-          可比 {marketResult.comparableSymbols} 个，可执行 {marketResult.executableSymbols} 个，
+          配置 {marketResult.configuredSymbols} 个，可比 {marketResult.comparableSymbols} 个，可执行 {marketResult.executableSymbols} 个，
           跳过 {marketResult.skippedCount} 个（{formatSkippedReasons(marketResult.skippedReasons)}）。
         </p>
         <div className="table-wrap">
@@ -576,6 +609,8 @@ export default function TradePage() {
                 <th>币对</th>
                 <th>实际价差(%)</th>
                 <th>Z-score</th>
+                <th>速度(%/分钟)</th>
+                <th>波动率(%)</th>
                 <th>有效杠杆</th>
                 <th>名义价差(%)</th>
                 <th>净名义价差(%)</th>
@@ -584,8 +619,8 @@ export default function TradePage() {
             <tbody>
               {topRows.length === 0 ? (
                 <tr>
-                  <td colSpan={7} className="empty-cell">
-                    暂无满足条件的行情数据
+                  <td colSpan={9} className="empty-cell">
+                    暂无行情数据
                   </td>
                 </tr>
               ) : (
@@ -599,6 +634,12 @@ export default function TradePage() {
                     <td data-label="Z-score">
                       <strong>{formatNumber(row.zscore, 3)}</strong>
                     </td>
+                    <td data-label="速度(%/分钟)">
+                      <strong>{formatSigned(row.spreadSpeedPctPerMin, 4)}</strong>
+                    </td>
+                    <td data-label="波动率(%)">
+                      <strong>{formatNumber(row.spreadVolatilityPct, 4)}</strong>
+                    </td>
                     <td data-label="有效杠杆">
                       <strong>{formatNumber(row.effectiveLeverage, 2)}x</strong>
                     </td>
@@ -607,6 +648,45 @@ export default function TradePage() {
                     </td>
                     <td data-label="净名义价差(%)">
                       <strong>{formatSigned(toNetNominalSpreadPct(row), 4)}%</strong>
+                    </td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section className="panel page-panel">
+        <div className="panel-title">
+          <h2>两所仓位明细</h2>
+          <small>总净敞口 {formatSigned(status.positionsSummary.totalNetExposure, 4)}</small>
+        </div>
+        <div className="table-wrap">
+          <table className="responsive-table">
+            <thead>
+              <tr>
+                <th>币对</th>
+                <th>Paradex 仓位</th>
+                <th>GRVT 仓位</th>
+                <th>净敞口</th>
+              </tr>
+            </thead>
+            <tbody>
+              {status.positionsSummary.bySymbol.length === 0 ? (
+                <tr>
+                  <td colSpan={4} className="empty-cell">
+                    暂无仓位数据
+                  </td>
+                </tr>
+              ) : (
+                status.positionsSummary.bySymbol.map((item) => (
+                  <tr key={`pos-${item.symbol}`}>
+                    <td data-label="币对">{item.symbol}</td>
+                    <td data-label="Paradex 仓位">{formatSigned(item.paradexPosition, 4)}</td>
+                    <td data-label="GRVT 仓位">{formatSigned(item.grvtPosition, 4)}</td>
+                    <td data-label="净敞口">
+                      <strong>{formatSigned(item.netExposure, 4)}</strong>
                     </td>
                   </tr>
                 ))

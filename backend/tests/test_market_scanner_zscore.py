@@ -53,8 +53,8 @@ async def test_get_top_spreads_sorted_by_abs_zscore(tmp_path: Path) -> None:
 
     payload = await scanner.get_top_spreads(limit=3)
     symbols = [item["symbol"] for item in payload["rows"]]
-    assert symbols == ["CCC-PERP", "AAA-PERP"]
-    assert payload["executable_symbols"] == 2
+    assert symbols == ["BBB-PERP", "CCC-PERP", "AAA-PERP"]
+    assert payload["executable_symbols"] == 3
 
 
 def test_compute_zscore_reads_history_from_repository(tmp_path: Path) -> None:
@@ -86,3 +86,18 @@ def test_compute_zscore_reads_history_from_repository(tmp_path: Path) -> None:
     scanner = NominalSpreadScanner(config, scan_interval_sec=60)
     zscore = scanner._compute_zscore("BTC-PERP", Decimal("25"))  # type: ignore[attr-defined]
     assert abs(float(zscore)) > 0
+
+
+def test_compute_spread_speed_metrics_returns_speed_and_volatility(tmp_path: Path) -> None:
+    scanner = NominalSpreadScanner(_build_test_config(tmp_path), scan_interval_sec=60)
+
+    speed_1, vol_1, samples_1 = scanner._compute_spread_speed_metrics("BTC-PERP", Decimal("0.10"))  # type: ignore[attr-defined]
+    assert float(speed_1) == 0.0
+    assert float(vol_1) == 0.0
+    assert samples_1 == 1
+
+    time.sleep(0.01)
+    speed_2, vol_2, samples_2 = scanner._compute_spread_speed_metrics("BTC-PERP", Decimal("0.30"))  # type: ignore[attr-defined]
+    assert samples_2 >= 2
+    assert float(speed_2) != 0.0
+    assert float(vol_2) > 0.0

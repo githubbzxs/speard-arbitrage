@@ -9,12 +9,54 @@ export interface RiskCounts {
   critical: number;
 }
 
+export interface PerformanceSummary {
+  runningSince: string;
+  runRealizedPnl: number;
+  runUnrealizedPnl: number;
+  runTotalPnl: number;
+  runPnlPct: number;
+  runTurnoverUsd: number;
+  runTradeCount: number;
+  equityNow: number;
+  equityPeak: number;
+  drawdownPct: number;
+  maxDrawdownPct: number;
+}
+
+export interface ExchangeBalanceSummary {
+  available: boolean;
+  source: string;
+  currency: string;
+  totalEquity: number;
+  availableBalance: number;
+  marginUsed: number;
+  updatedAt: string;
+}
+
+export interface PositionSummaryItem {
+  symbol: string;
+  paradexPosition: number;
+  grvtPosition: number;
+  netExposure: number;
+}
+
+export interface PositionsSummary {
+  totalNetExposure: number;
+  bySymbol: PositionSummaryItem[];
+}
+
 export interface DashboardStatus {
   engineStatus: EngineStatus;
   mode: TradingMode;
   netExposure: number;
   dailyVolume: number;
   riskCounts: RiskCounts;
+  performance: PerformanceSummary;
+  balances: {
+    paradex: ExchangeBalanceSummary;
+    grvt: ExchangeBalanceSummary;
+  };
+  positionsSummary: PositionsSummary;
   updatedAt: string;
 }
 
@@ -27,6 +69,43 @@ export const DEFAULT_STATUS: DashboardStatus = {
     normal: 0,
     warning: 0,
     critical: 0
+  },
+  performance: {
+    runningSince: "",
+    runRealizedPnl: 0,
+    runUnrealizedPnl: 0,
+    runTotalPnl: 0,
+    runPnlPct: 0,
+    runTurnoverUsd: 0,
+    runTradeCount: 0,
+    equityNow: 0,
+    equityPeak: 0,
+    drawdownPct: 0,
+    maxDrawdownPct: 0
+  },
+  balances: {
+    paradex: {
+      available: false,
+      source: "init",
+      currency: "",
+      totalEquity: 0,
+      availableBalance: 0,
+      marginUsed: 0,
+      updatedAt: ""
+    },
+    grvt: {
+      available: false,
+      source: "init",
+      currency: "",
+      totalEquity: 0,
+      availableBalance: 0,
+      marginUsed: 0,
+      updatedAt: ""
+    }
+  },
+  positionsSummary: {
+    totalNetExposure: 0,
+    bySymbol: []
   },
   updatedAt: ""
 };
@@ -56,10 +135,13 @@ export interface TradeTopCandidate {
   tradableEdgeBps: number;
   grossNominalSpread: number;
   zscore: number;
+  spreadSpeedPctPerMin: number;
+  spreadVolatilityPct: number;
 }
 
 export interface TradeSelection {
   selectedSymbol: string;
+  candidates: TradeTopCandidate[];
   top10Candidates: TradeTopCandidate[];
   updatedAt: string;
 }
@@ -110,6 +192,9 @@ export interface MarketTopSpreadRow {
   feeCostEstimate: number;
   netNominalSpread: number;
   zscore: number;
+  spreadSpeedPctPerMin: number;
+  spreadVolatilityPct: number;
+  speedSamples: number;
   paradexFeeRate: number;
   grvtFeeRate: number;
   feeSource: {

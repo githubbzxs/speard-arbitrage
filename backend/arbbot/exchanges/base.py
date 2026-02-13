@@ -5,6 +5,7 @@ from __future__ import annotations
 import abc
 from collections.abc import Awaitable, Callable
 from decimal import Decimal
+from typing import Any
 
 from ..config import SymbolConfig
 from ..models import BBO, ExchangeName, OrderAck, OrderRequest
@@ -65,6 +66,10 @@ class BaseExchangeAdapter(abc.ABC):
     @abc.abstractmethod
     async def fetch_position(self, symbol: SymbolConfig) -> Decimal:
         """获取当前净仓位。"""
+
+    @abc.abstractmethod
+    async def fetch_balance_summary(self) -> dict[str, Any]:
+        """获取余额摘要（总权益/可用/占用）。"""
 
     @abc.abstractmethod
     async def place_order(self, request: OrderRequest) -> OrderAck:

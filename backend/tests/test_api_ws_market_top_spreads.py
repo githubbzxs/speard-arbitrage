@@ -50,7 +50,7 @@ def _build_test_config(tmp_path: Path) -> AppConfig:
 def test_ws_stream_emits_market_top_spreads(tmp_path: Path) -> None:
     app = create_app(_build_test_config(tmp_path))
 
-    async def fake_get_top_spreads(limit: int, force_refresh: bool) -> dict[str, object]:
+    async def fake_get_spreads(limit: int, force_refresh: bool) -> dict[str, object]:
         return {
             "updated_at": "2026-02-13T00:00:00+00:00",
             "scan_interval_sec": 300,
@@ -79,7 +79,7 @@ def test_ws_stream_emits_market_top_spreads(tmp_path: Path) -> None:
             ],
         }
 
-    app.state.market_scanner.get_top_spreads = fake_get_top_spreads
+    app.state.market_scanner.get_spreads = fake_get_spreads
 
     with TestClient(app) as client:
         with client.websocket_connect("/ws/stream") as ws:

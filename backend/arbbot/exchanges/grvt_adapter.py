@@ -6,9 +6,10 @@ import random
 import uuid
 from collections.abc import Sequence
 from decimal import Decimal
+from typing import Any
 
 from ..config import ExchangeConfig, SymbolConfig
-from ..models import BBO, ExchangeName, OrderAck, OrderRequest, TradeSide
+from ..models import BBO, ExchangeName, OrderAck, OrderRequest, TradeSide, utc_iso
 from .base import BaseExchangeAdapter
 
 GRVT_ORDERBOOK_LIMIT = 10
@@ -143,6 +144,19 @@ class GrvtAdapter(BaseExchangeAdapter):
         except Exception:
             return Decimal("0")
 
+    async def fetch_balance_summary(self) -> dict[str, Any]:
+        if self.simulate_market_data:
+            return self._simulated_balance_summary()
+
+        if self._client is None:
+            return self._empty_balance_summary(source="unavailable")
+
+        try:
+            raw = await self._client.fetch_balance()
+            return self._parse_balance_summary(raw, source="live")
+        except Exception:
+            return self._empty_balance_summary(source="error")
+
     async def place_order(self, request: OrderRequest) -> OrderAck:
         if self.simulate_market_data:
             bbo = self._simulate_bbo(request.symbol, source="ws")
@@ -227,6 +241,85 @@ class GrvtAdapter(BaseExchangeAdapter):
             return True
         except Exception:
             return False
+
+    def _simulated_balance_summary(self) -> dict[str, Any]:
+        total_equity = Decimal("100000")
+        notional = Decimal("0")
+        for symbol, qty in self._sim_pos.items():
+            mark = self._sim_mid.get(symbol) or self._infer_anchor_mid(symbol)
+            notional += abs(qty) * mark
+        margin_used = notional * Decimal("0.05")
+        available = max(Decimal("0"), total_equity - margin_used)
+        return {
+            "available": True,
+            "source": "simulated",
+            "currency": "USDT",
+            "total_equity": float(total_equity),
+            "available_balance": float(available),
+            "margin_used": float(margin_used),
+            "updated_at": utc_iso(),
+        }
+
+    @staticmethod
+    def _empty_balance_summary(source: str) -> dict[str, Any]:
+        return {
+            "available": False,
+            "source": source,
+            "currency": "USDT",
+            "total_equity": 0.0,
+            "available_balance": 0.0,
+            "margin_used": 0.0,
+            "updated_at": utc_iso(),
+        }
+
+    @staticmethod
+    def _parse_balance_summary(raw: dict[str, Any], source: str) -> dict[str, Any]:
+        preferred = ("USDT", "USDC", "USD")
+        total_map = raw.get("total") if isinstance(raw.get("total"), dict) else {}
+        free_map = raw.get("free") if isinstance(raw.get("free"), dict) else {}
+        used_map = raw.get("used") if isinstance(raw.get("used"), dict) else {}
+
+        def pick_amount(map_obj: dict[str, Any], currency: str) -> Decimal | None:
+            value = map_obj.get(currency)
+            if value is None:
+                return None
+            try:
+                return Decimal(str(value))
+            except Exception:
+                return None
+
+        currency = "USDT"
+        total = Decimal("0")
+        free = Decimal("0")
+        used = Decimal("0")
+
+        for candidate in preferred:
+            candidate_total = pick_amount(total_map, candidate)
+            candidate_free = pick_amount(free_map, candidate)
+            candidate_used = pick_amount(used_map, candidate)
+            if candidate_total is not None or candidate_free is not None or candidate_used is not None:
+                currency = candidate
+                total = candidate_total or Decimal("0")
+                free = candidate_free or Decimal("0")
+                used = candidate_used or Decimal("0")
+                break
+
+        if total <= 0 and free > 0 and used > 0:
+            total = free + used
+        if total <= 0 and free > 0:
+            total = free
+        if free <= 0 and total > 0 and used >= 0:
+            free = max(Decimal("0"), total - used)
+
+        return {
+            "available": True,
+            "source": source,
+            "currency": currency,
+            "total_equity": float(total),
+            "available_balance": float(free),
+            "margin_used": float(max(Decimal("0"), used)),
+            "updated_at": utc_iso(),
+        }
 
     def _simulate_bbo(self, symbol: str, source: str) -> BBO:
         anchor = self._infer_anchor_mid(symbol) * Decimal("1.00015")

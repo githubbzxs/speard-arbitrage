@@ -192,6 +192,21 @@
   - Impact：`web/ui/src/App.tsx`、`web/ui/src/pages/TradePage.tsx`、`web/ui/src/styles.css`。
   - Verify：`cd web/ui && npm run build`，并确认导航仅保留“行情/下单页面 + API 配置页面”，且单页包含下单操作与唯一行情表格。
 
+- [2026-02-13] 候选范围从 Top10 改为全量可比币对
+  - Why：用户要求显示全部币对，去除 Top10 截断与正向 Z-score 过滤。
+  - Impact：`backend/arbbot/market/scanner.py`、`backend/arbbot/web/api.py`、`backend/tests/test_api_trade_selection.py`、`backend/tests/test_api_market_top_spreads.py`、`web/ui/src/api/client.ts`、`web/ui/src/pages/TradePage.tsx`。
+  - Verify：`python -m pytest backend/tests`，并确认 `/api/market/spreads` 与下单候选返回全量可比币对。
+
+- [2026-02-13] 新增价差浮动速度指标（速度+波动率）
+  - Why：用户需要衡量价差变化速度与潜在获利空间，避免只看静态价差。
+  - Impact：`backend/arbbot/market/scanner.py`、`backend/tests/test_market_scanner_zscore.py`、`web/ui/src/types.ts`、`web/ui/src/api/client.ts`、`web/ui/src/pages/TradePage.tsx`。
+  - Verify：`python -m pytest backend/tests`、`cd web/ui && npm run build`，并确认行情表展示“速度(%/分钟)”与“波动率(%)”。
+
+- [2026-02-13] 新增本次运行绩效统计（盈亏/交易量/回撤/最大回撤）与两所余额仓位
+  - Why：满足用户对策略收益质量与账户状态的实时观测诉求。
+  - Impact：`backend/arbbot/strategy/performance_tracker.py`、`backend/arbbot/strategy/execution_engine.py`、`backend/arbbot/strategy/orchestrator.py`、`backend/arbbot/exchanges/base.py`、`backend/arbbot/exchanges/paradex_adapter.py`、`backend/arbbot/exchanges/grvt_adapter.py`、`backend/tests/test_performance_tracker.py`、`backend/tests/test_status_metrics.py`、`web/ui/src/types.ts`、`web/ui/src/api/client.ts`、`web/ui/src/pages/TradePage.tsx`。
+  - Verify：`python -m pytest backend/tests`、`cd web/ui && npm run build`，并确认 `/api/status` 包含 `performance/balances/positions_summary` 且前端总览卡片显示对应值。
+
 ## Commands
 - 后端测试：`python -m pytest backend/tests`
 - 后端启动：`python backend/main.py`
