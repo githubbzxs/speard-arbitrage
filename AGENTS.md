@@ -57,6 +57,11 @@
   - Impact：`backend/arbbot/exchanges/grvt_adapter.py`、`backend/tests/test_grvt_adapter_depth.py`。
   - Verify：`python -m pytest backend/tests/test_grvt_adapter_depth.py`，并线上确认 `GET /api/symbols` 不再全为 0。
 
+- [2026-02-13] 生产入口绑定子域名 spread.0xpsyche.me（含 HTTPS）
+  - Why：按项目域名约定，统一使用 `xxx.0xpsyche.me` 作为对外入口，避免仅用 IP 访问。
+  - Impact：VPS `nginx` 站点 `/etc/nginx/sites-available/arbbot.conf`（server_name/certbot 证书与跳转）。
+  - Verify：`curl -I http://spread.0xpsyche.me` 返回 301，`curl -I https://spread.0xpsyche.me` 返回 200，`curl https://spread.0xpsyche.me/api/status` 正常。
+
 ## Commands
 - 后端测试：`python -m pytest backend/tests`
 - 后端启动：`python backend/main.py`
