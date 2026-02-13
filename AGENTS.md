@@ -7,6 +7,11 @@
 - 数据存储：SQLite + CSV。
 
 ## Decisions
+- [2026-02-13] 下单候选默认自动应用首个可执行标的
+  - Why：用户要求“默认这些可执行”，避免每次刷新后还需手动点“应用交易标的”。
+  - Impact：`backend/arbbot/web/api.py`、`backend/tests/test_api_trade_selection.py`。
+  - Verify：`python -m pytest backend/tests/test_api_trade_selection.py`。
+
 - [2026-02-13] 行情与候选统一过滤为仅保留 50x 及以上有效杠杆币对
   - Why：用户明确要求“只要有 50x 杠杆的币”，并避免前端显示与实际候选口径不一致。
   - Impact：`backend/arbbot/market/scanner.py`、`backend/tests/test_market_scanner_leverage_filter.py`、`web/ui/src/pages/TradePage.tsx`、`web/ui/src/pages/MarketPage.tsx`。

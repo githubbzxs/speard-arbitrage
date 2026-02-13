@@ -94,7 +94,7 @@ def test_get_trade_selection_returns_candidates(tmp_path: Path) -> None:
 
     assert response.status_code == 200
     payload = response.json()
-    assert payload["selected_symbol"] == ""
+    assert payload["selected_symbol"] == "BTC-PERP"
     assert len(payload["candidates"]) == 2
     assert payload["candidates"][0]["symbol"] == "BTC-PERP"
     assert len(payload["top10_candidates"]) == 2

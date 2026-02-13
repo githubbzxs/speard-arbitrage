@@ -190,7 +190,10 @@ def create_app(config: AppConfig) -> FastAPI:
         top10_symbol_map = next_symbol_map
         top10_updated_at = str(payload.get("updated_at") or utc_iso())
 
-        if reconcile_selected and selected_symbol:
+        if not reconcile_selected:
+            return
+
+        if selected_symbol:
             next_selected_config = top10_symbol_map.get(selected_symbol)
             if next_selected_config is None:
                 selected_symbol = ""
@@ -199,6 +202,15 @@ def create_app(config: AppConfig) -> FastAPI:
             else:
                 selected_symbol_config = next_selected_config
                 orchestrator.set_selected_symbol(next_selected_config)
+            return
+
+        if top10_candidates:
+            default_symbol = str(top10_candidates[0].get("symbol") or "").strip().upper()
+            default_cfg = top10_symbol_map.get(default_symbol)
+            if default_cfg is not None:
+                selected_symbol = default_symbol
+                selected_symbol_config = default_cfg
+                orchestrator.set_selected_symbol(default_cfg)
 
     async def refresh_top10_candidates(
         force_refresh: bool = False,
