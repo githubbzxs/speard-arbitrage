@@ -15,6 +15,21 @@ from pysdk.grvt_raw_types import ApiGetAllInitialLeverageRequest
 from ..config import AppConfig
 
 
+def _is_valid_hex_key(value: str) -> bool:
+    normalized = value.strip()
+    if normalized.startswith(("0x", "0X")):
+        normalized = normalized[2:]
+    if not normalized:
+        return False
+    if len(normalized) % 2 != 0:
+        return False
+    try:
+        bytes.fromhex(normalized)
+        return True
+    except ValueError:
+        return False
+
+
 class CredentialsValidator:
     """严格校验交易所凭证是否可用。"""
 
@@ -46,13 +61,12 @@ class CredentialsValidator:
             "fetch_positions": False,
         }
 
-        api_key = str(payload.get("api_key") or "").strip()
-        api_secret = str(payload.get("api_secret") or "").strip()
-        passphrase = str(payload.get("passphrase") or "").strip()
-        if not api_key or not api_secret:
+        l2_private_key = str(payload.get("l2_private_key") or "").strip()
+        l2_address = str(payload.get("l2_address") or "").strip()
+        if not l2_private_key or not l2_address:
             return {
                 "valid": False,
-                "reason": "Paradex 缺少必填字段：api_key/api_secret",
+                "reason": "Paradex 缺少必填字段：l2_private_key/l2_address",
                 "checks": checks,
             }
 
@@ -61,9 +75,14 @@ class CredentialsValidator:
         client = ccxt.paradex(
             {
                 "enableRateLimit": True,
-                "apiKey": api_key,
-                "secret": api_secret,
-                **({"password": passphrase} if passphrase else {}),
+                "walletAddress": l2_address,
+                "privateKey": l2_private_key,
+                "options": {
+                    "paradexAccount": {
+                        "privateKey": l2_private_key,
+                        "address": l2_address,
+                    }
+                },
             }
         )
 
@@ -112,6 +131,12 @@ class CredentialsValidator:
             }
 
         checks["required_fields"] = True
+        if not _is_valid_hex_key(private_key):
+            return {
+                "valid": False,
+                "reason": "GRVT private_key 格式错误：必须是十六进制字符串（可带 0x 前缀）",
+                "checks": checks,
+            }
 
         ccxt_client = GrvtCcxtPro(
             env=self._resolve_grvt_ccxt_env(),

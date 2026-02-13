@@ -42,9 +42,8 @@ def test_post_credentials_api_success(tmp_path: Path) -> None:
     app = create_app(_build_test_config(tmp_path))
     payload = {
         "paradex": {
-            "api_key": "paradex-key",
-            "api_secret": "paradex-secret",
-            "passphrase": "paradex-passphrase",
+            "l2_private_key": "paradex-l2-private",
+            "l2_address": "paradex-l2-address",
         },
         "grvt": {
             "api_key": "grvt-key",
@@ -66,7 +65,7 @@ def test_post_credentials_api_success(tmp_path: Path) -> None:
 def test_status_true_after_save(tmp_path: Path) -> None:
     app = create_app(_build_test_config(tmp_path))
     payload = {
-        "paradex": {"api_key": "pdx-key"},
+        "paradex": {"l2_private_key": "pdx-l2-private"},
         "grvt": {"private_key": "grvt-private"},
     }
 
@@ -77,9 +76,9 @@ def test_status_true_after_save(tmp_path: Path) -> None:
     assert status_response.status_code == 200
     status_body = status_response.json()
     data = status_body["data"]
-    assert data["paradex"]["api_key"]["configured"] is True
-    assert isinstance(data["paradex"]["api_key"]["updated_at"], str)
-    assert data["paradex"]["api_key"]["masked"].startswith("****")
+    assert data["paradex"]["l2_private_key"]["configured"] is True
+    assert isinstance(data["paradex"]["l2_private_key"]["updated_at"], str)
+    assert data["paradex"]["l2_private_key"]["masked"].startswith("****")
     assert data["grvt"]["private_key"]["configured"] is True
     assert isinstance(data["grvt"]["private_key"]["updated_at"], str)
     assert data["grvt"]["private_key"]["masked"].startswith("****")
@@ -89,23 +88,22 @@ def test_status_false_after_clear(tmp_path: Path) -> None:
     app = create_app(_build_test_config(tmp_path))
 
     with TestClient(app) as client:
-        client.post("/api/credentials", json={"paradex": {"api_key": "to-be-cleared"}})
-        client.post("/api/credentials", json={"paradex": {"api_key": ""}})
+        client.post("/api/credentials", json={"paradex": {"l2_private_key": "to-be-cleared"}})
+        client.post("/api/credentials", json={"paradex": {"l2_private_key": ""}})
         status_response = client.get("/api/credentials/status")
 
     data = status_response.json()["data"]
-    assert data["paradex"]["api_key"]["configured"] is False
-    assert data["paradex"]["api_key"]["updated_at"] is None
-    assert data["paradex"]["api_key"]["masked"] == ""
+    assert data["paradex"]["l2_private_key"]["configured"] is False
+    assert data["paradex"]["l2_private_key"]["updated_at"] is None
+    assert data["paradex"]["l2_private_key"]["masked"] == ""
 
 
 def test_status_api_not_leak_plaintext(tmp_path: Path) -> None:
     app = create_app(_build_test_config(tmp_path))
     secrets = {
         "paradex": {
-            "api_key": "SECRET_PARADEX_KEY_123",
-            "api_secret": "SECRET_PARADEX_SECRET_456",
-            "passphrase": "SECRET_PARADEX_PASS_789",
+            "l2_private_key": "SECRET_PARADEX_L2_PRIVATE_123",
+            "l2_address": "SECRET_PARADEX_L2_ADDRESS_456",
         },
         "grvt": {
             "api_key": "SECRET_GRVT_KEY_123",
@@ -121,9 +119,8 @@ def test_status_api_not_leak_plaintext(tmp_path: Path) -> None:
 
     status_text = status_response.text
     for secret in [
-        "SECRET_PARADEX_KEY_123",
-        "SECRET_PARADEX_SECRET_456",
-        "SECRET_PARADEX_PASS_789",
+        "SECRET_PARADEX_L2_PRIVATE_123",
+        "SECRET_PARADEX_L2_ADDRESS_456",
         "SECRET_GRVT_KEY_123",
         "SECRET_GRVT_SECRET_456",
         "SECRET_GRVT_PRIVATE_789",
@@ -139,12 +136,12 @@ def test_validate_credentials_saved_source(tmp_path: Path) -> None:
     app = create_app(_build_test_config(tmp_path))
 
     payload = {
-        "paradex": {"api_key": "pdx-key", "api_secret": "pdx-secret"},
+        "paradex": {"l2_private_key": "pdx-l2-private", "l2_address": "pdx-l2-address"},
         "grvt": {"api_key": "grvt-key", "private_key": "grvt-private", "trading_account_id": "acc-1"},
     }
 
     async def fake_validate(credentials: dict[str, dict[str, str]]) -> dict[str, object]:
-        assert credentials["paradex"]["api_key"] == "pdx-key"
+        assert credentials["paradex"]["l2_private_key"] == "pdx-l2-private"
         assert credentials["grvt"]["trading_account_id"] == "acc-1"
         return {
             "ok": True,
@@ -168,7 +165,7 @@ def test_validate_credentials_draft_source(tmp_path: Path) -> None:
     app = create_app(_build_test_config(tmp_path))
 
     async def fake_validate(credentials: dict[str, dict[str, str]]) -> dict[str, object]:
-        assert credentials["paradex"]["api_key"] == "draft-pdx-key"
+        assert credentials["paradex"]["l2_private_key"] == "draft-pdx-l2-private"
         assert credentials["grvt"]["api_key"] == "draft-grvt-key"
         return {
             "ok": False,
@@ -184,7 +181,7 @@ def test_validate_credentials_draft_source(tmp_path: Path) -> None:
             json={
                 "source": "draft",
                 "payload": {
-                    "paradex": {"api_key": "draft-pdx-key"},
+                    "paradex": {"l2_private_key": "draft-pdx-l2-private"},
                     "grvt": {"api_key": "draft-grvt-key"},
                 },
             },
@@ -203,3 +200,27 @@ def test_validate_credentials_draft_requires_payload(tmp_path: Path) -> None:
         response = client.post("/api/credentials/validate", json={"source": "draft"})
 
     assert response.status_code == 400
+
+
+def test_validate_credentials_draft_invalid_grvt_private_key_format(tmp_path: Path) -> None:
+    app = create_app(_build_test_config(tmp_path))
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/credentials/validate",
+            json={
+                "source": "draft",
+                "payload": {
+                    "grvt": {
+                        "api_key": "grvt-key",
+                        "private_key": "not-a-hex-key",
+                        "trading_account_id": "acc-1",
+                    }
+                },
+            },
+        )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["ok"] is False
+    assert "十六进制字符串" in body["data"]["grvt"]["reason"]

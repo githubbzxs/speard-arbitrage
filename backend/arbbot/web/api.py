@@ -27,9 +27,8 @@ class ActionResponse(BaseModel):
 
 
 class ParadexCredentialsPayload(BaseModel):
-    api_key: str | None = None
-    api_secret: str | None = None
-    passphrase: str | None = None
+    l2_private_key: str | None = None
+    l2_address: str | None = None
 
 
 class GrvtCredentialsPayload(BaseModel):
@@ -71,7 +70,7 @@ def create_app(config: AppConfig) -> FastAPI:
         paradex_saved = saved.get("paradex") if isinstance(saved.get("paradex"), dict) else {}
         grvt_saved = saved.get("grvt") if isinstance(saved.get("grvt"), dict) else {}
 
-        for field in ("api_key", "api_secret", "passphrase"):
+        for field in ("l2_private_key", "l2_address"):
             value = str(paradex_saved.get(field, "")).strip()
             if value:
                 setattr(config.paradex.credentials, field, value)
@@ -194,9 +193,8 @@ def create_app(config: AppConfig) -> FastAPI:
             raw_payload = payload.payload.model_dump(exclude_none=True)
             target_credentials = {
                 "paradex": {
-                    "api_key": str(raw_payload.get("paradex", {}).get("api_key", "")).strip(),
-                    "api_secret": str(raw_payload.get("paradex", {}).get("api_secret", "")).strip(),
-                    "passphrase": str(raw_payload.get("paradex", {}).get("passphrase", "")).strip(),
+                    "l2_private_key": str(raw_payload.get("paradex", {}).get("l2_private_key", "")).strip(),
+                    "l2_address": str(raw_payload.get("paradex", {}).get("l2_address", "")).strip(),
                 },
                 "grvt": {
                     "api_key": str(raw_payload.get("grvt", {}).get("api_key", "")).strip(),

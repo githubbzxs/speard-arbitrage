@@ -70,8 +70,8 @@ def test_apply_credentials_success_updates_runtime_config(tmp_path: Path) -> Non
 
     payload = {
         "paradex": {
-            "api_key": "paradex-key",
-            "api_secret": "paradex-secret",
+            "l2_private_key": "paradex-l2-private",
+            "l2_address": "paradex-l2-address",
         },
         "grvt": {
             "private_key": "grvt-private-key",
@@ -88,8 +88,8 @@ def test_apply_credentials_success_updates_runtime_config(tmp_path: Path) -> Non
         body = apply_response.json()
         assert body["ok"] is True
 
-    assert app.state.orchestrator.config.paradex.credentials.api_key == "paradex-key"
-    assert app.state.orchestrator.config.paradex.credentials.api_secret == "paradex-secret"
+    assert app.state.orchestrator.config.paradex.credentials.l2_private_key == "paradex-l2-private"
+    assert app.state.orchestrator.config.paradex.credentials.l2_address == "paradex-l2-address"
     assert app.state.orchestrator.config.grvt.credentials.private_key == "grvt-private-key"
     assert app.state.orchestrator.config.grvt.credentials.trading_account_id == "acc-1"
 
@@ -100,7 +100,7 @@ def test_apply_credentials_requires_required_fields_when_live_order_enabled(tmp_
 
     payload = {
         "paradex": {
-            "api_key": "only-paradex-key",
+            "l2_private_key": "only-paradex-l2-private",
         }
     }
 

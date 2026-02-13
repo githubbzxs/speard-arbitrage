@@ -510,7 +510,7 @@ class ArbitrageOrchestrator:
                 }
 
             applied_fields = {
-                "paradex": apply_fields("paradex", ("api_key", "api_secret", "passphrase")),
+                "paradex": apply_fields("paradex", ("l2_private_key", "l2_address")),
                 "grvt": apply_fields("grvt", ("private_key", "trading_account_id", "api_key", "api_secret")),
             }
 
@@ -523,10 +523,10 @@ class ArbitrageOrchestrator:
 
             missing_fields: list[str] = []
             if self.config.runtime.live_order_enabled:
-                if not self.config.paradex.credentials.api_key.strip():
-                    missing_fields.append("paradex.api_key")
-                if not self.config.paradex.credentials.api_secret.strip():
-                    missing_fields.append("paradex.api_secret")
+                if not self.config.paradex.credentials.l2_private_key.strip():
+                    missing_fields.append("paradex.l2_private_key")
+                if not self.config.paradex.credentials.l2_address.strip():
+                    missing_fields.append("paradex.l2_address")
                 if not self.config.grvt.credentials.private_key.strip():
                     missing_fields.append("grvt.private_key")
                 if not self.config.grvt.credentials.trading_account_id.strip():

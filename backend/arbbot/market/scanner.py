@@ -30,6 +30,21 @@ DEFAULT_OFFICIAL_GRVT_TAKER_FEE = Decimal("0.0002")
 DEFAULT_OFFICIAL_GRVT_MAKER_FEE = Decimal("0.0002")
 
 
+def _is_valid_hex_key(value: str) -> bool:
+    normalized = value.strip()
+    if normalized.startswith(("0x", "0X")):
+        normalized = normalized[2:]
+    if not normalized:
+        return False
+    if len(normalized) % 2 != 0:
+        return False
+    try:
+        bytes.fromhex(normalized)
+        return True
+    except ValueError:
+        return False
+
+
 def _to_decimal(raw: Any) -> Decimal | None:
     if raw is None:
         return None
@@ -159,6 +174,8 @@ class NominalSpreadScanner:
         self._updated_at = ""
         self._last_refresh_monotonic = 0.0
         self._last_error = ""
+        self._configured_symbols = 0
+        self._comparable_symbols = 0
         self._scanned_symbols = 0
         self._skipped_reasons: dict[str, int] = {}
         self._lock = asyncio.Lock()
@@ -177,6 +194,9 @@ class NominalSpreadScanner:
             "updated_at": self._updated_at,
             "scan_interval_sec": self._scan_interval_sec,
             "limit": resolved_limit,
+            "configured_symbols": self._configured_symbols,
+            "comparable_symbols": self._comparable_symbols,
+            "executable_symbols": len(sorted_rows),
             "scanned_symbols": self._scanned_symbols,
             "total_symbols": len(sorted_rows),
             "skipped_count": sum(self._skipped_reasons.values()),
@@ -200,21 +220,26 @@ class NominalSpreadScanner:
 
     async def _refresh_once(self) -> None:
         try:
-            scanned_rows, scanned_symbols, skipped_reasons = await self._scan_all_symbols()
+            scanned_rows, configured_symbols, comparable_symbols, skipped_reasons = await self._scan_all_symbols()
             self._rows = scanned_rows
-            self._scanned_symbols = scanned_symbols
+            self._configured_symbols = configured_symbols
+            self._comparable_symbols = comparable_symbols
+            self._scanned_symbols = comparable_symbols
             self._skipped_reasons = skipped_reasons
             self._updated_at = utc_iso()
             self._last_refresh_monotonic = time.monotonic()
             self._last_error = ""
         except Exception as exc:  # pragma: no cover - 网络异常分支
-            self._last_error = f"扫描失败: {exc}"
+            raw_message = str(exc).strip()
+            if "non-hexadecimal digit found" in raw_message.lower():
+                raw_message = "GRVT private_key 格式错误：必须是十六进制字符串（可带 0x 前缀）"
+            self._last_error = f"扫描失败: {raw_message or '未知异常'}"
             self._updated_at = utc_iso()
             self._last_refresh_monotonic = time.monotonic()
             if not self._rows:
                 self._rows = []
 
-    async def _scan_all_symbols(self) -> tuple[list[dict[str, Any]], int, dict[str, int]]:
+    async def _scan_all_symbols(self) -> tuple[list[dict[str, Any]], int, int, dict[str, int]]:
         paradex_client = ccxt.paradex({"enableRateLimit": True})
         grvt_client = GrvtCcxtPro(env=self._resolve_grvt_ccxt_env(), parameters=self._build_grvt_ccxt_params())
 
@@ -226,6 +251,11 @@ class NominalSpreadScanner:
             grvt_map = self._collect_grvt_markets(grvt_client.markets, grvt_leverage_map)
 
             shared_bases = sorted(set(paradex_map.keys()) & set(grvt_map.keys()))
+            configured_bases = {
+                str(cfg.base_asset).upper().strip()
+                for cfg in self._config.symbols
+                if cfg.enabled and str(cfg.base_asset).strip()
+            }
             skipped_reasons: dict[str, int] = {}
             semaphore = asyncio.Semaphore(6)
 
@@ -249,7 +279,7 @@ class NominalSpreadScanner:
                 elif reason:
                     skipped_reasons[reason] = skipped_reasons.get(reason, 0) + 1
 
-            return rows, len(shared_bases), skipped_reasons
+            return rows, len(configured_bases), len(shared_bases), skipped_reasons
         finally:
             await paradex_client.close()
             session = getattr(grvt_client, "_session", None)
@@ -328,6 +358,7 @@ class NominalSpreadScanner:
         tradable_edge_bps = Decimal("0")
         if reference_mid > 0:
             tradable_edge_bps = (tradable_edge_price / reference_mid) * Decimal("10000")
+        tradable_edge_pct = tradable_edge_bps / Decimal("100")
 
         effective_leverage = min(_sanitize_leverage(paradex_max_leverage), _sanitize_leverage(grvt_max_leverage))
 
@@ -357,6 +388,7 @@ class NominalSpreadScanner:
                 "grvt_mid": float(grvt_mid),
                 "reference_mid": float(reference_mid),
                 "tradable_edge_price": float(tradable_edge_price),
+                "tradable_edge_pct": float(tradable_edge_pct),
                 "tradable_edge_bps": float(tradable_edge_bps),
                 "direction": direction,
                 "paradex_max_leverage": float(paradex_max_leverage),
@@ -481,6 +513,8 @@ class NominalSpreadScanner:
         credentials = self._config.grvt.credentials
         if not credentials.trading_account_id.strip() or not credentials.private_key.strip() or not credentials.api_key.strip():
             raise ValueError("GRVT 凭证不足，无法获取真实杠杆（需要 api_key/private_key/trading_account_id）")
+        if not _is_valid_hex_key(credentials.private_key):
+            raise ValueError("GRVT private_key 格式错误：必须是十六进制字符串（可带 0x 前缀）")
 
         raw_client = GrvtRawAsync(
             GrvtApiConfig(

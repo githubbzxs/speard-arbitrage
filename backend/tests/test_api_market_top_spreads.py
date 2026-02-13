@@ -62,8 +62,11 @@ def test_market_top_spreads_endpoint_returns_scanner_payload(tmp_path: Path) -> 
             "updated_at": "2026-02-13T00:00:00+00:00",
             "scan_interval_sec": 300,
             "limit": 7,
+            "configured_symbols": 10,
+            "comparable_symbols": 8,
+            "executable_symbols": 1,
             "total_symbols": 1,
-            "scanned_symbols": 3,
+            "scanned_symbols": 8,
             "skipped_count": 2,
             "skipped_reasons": {"net_spread_not_positive": 2},
             "fee_profile": {"paradex_leg": "taker", "grvt_leg": "maker"},
@@ -74,6 +77,7 @@ def test_market_top_spreads_endpoint_returns_scanner_payload(tmp_path: Path) -> 
                     "gross_nominal_spread": 12.34,
                     "net_nominal_spread": 9.87,
                     "tradable_edge_price": 6.17,
+                    "tradable_edge_pct": 0.53,
                 }
             ],
         }
@@ -86,8 +90,12 @@ def test_market_top_spreads_endpoint_returns_scanner_payload(tmp_path: Path) -> 
     assert response.status_code == 200
     payload = response.json()
     assert payload["limit"] == 7
+    assert payload["configured_symbols"] == 10
+    assert payload["comparable_symbols"] == 8
+    assert payload["executable_symbols"] == 1
     assert payload["rows"][0]["symbol"] == "BTC-PERP"
     assert payload["rows"][0]["gross_nominal_spread"] == 12.34
+    assert payload["rows"][0]["tradable_edge_pct"] == 0.53
 
 
 def test_market_top_spreads_hydrate_saved_credentials_before_scan(tmp_path: Path) -> None:
@@ -107,6 +115,9 @@ def test_market_top_spreads_hydrate_saved_credentials_before_scan(tmp_path: Path
             "updated_at": "2026-02-13T00:00:00+00:00",
             "scan_interval_sec": 300,
             "limit": 1,
+            "configured_symbols": 10,
+            "comparable_symbols": 0,
+            "executable_symbols": 0,
             "scanned_symbols": 0,
             "total_symbols": 0,
             "skipped_count": 0,

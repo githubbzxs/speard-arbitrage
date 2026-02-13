@@ -11,6 +11,9 @@ const EMPTY_RESULT: MarketTopSpreadsResponse = {
   updatedAt: "",
   scanIntervalSec: 300,
   limit: TOP_LIMIT,
+  configuredSymbols: 0,
+  comparableSymbols: 0,
+  executableSymbols: 0,
   scannedSymbols: 0,
   totalSymbols: 0,
   skippedCount: 0,
@@ -105,8 +108,8 @@ export default function MarketPage() {
     if (topRows.length === 0) {
       return "当前无可执行价差";
     }
-    return `全市场扫描 ${result.scannedSymbols} 个可比币对，展示名义价差 Top${topRows.length}`;
-  }, [loading, result.scannedSymbols, topRows.length]);
+    return `下单配置 ${result.configuredSymbols} 个币对，可比 ${result.comparableSymbols} 个，可执行 ${result.executableSymbols} 个`;
+  }, [loading, result.comparableSymbols, result.configuredSymbols, result.executableSymbols, topRows.length]);
 
   return (
     <div className="page-grid">
@@ -127,11 +130,12 @@ export default function MarketPage() {
 
         <p className="hint">
           计算口径：实际价差 = max(Paradex 买一 - GRVT 买一, GRVT 卖一 - Paradex 卖一)；
-          名义价差 = 实际价差 × min(Paradex 最大杠杆, GRVT 最大杠杆)。
+          名义价差 = 实际价差 × min(Paradex 最大杠杆, GRVT 最大杠杆)；百分比口径 = 价差 / 参考中间价。
         </p>
         <p className="hint">
           最近刷新 {formatTimestamp(result.updatedAt)}，扫描周期约 {result.scanIntervalSec} 秒，
-          共覆盖 {result.totalSymbols} 个可用机会，跳过 {result.skippedCount} 个（{formatSkippedReasons(result.skippedReasons)}）。
+          下单配置 {result.configuredSymbols} 个币对，可比 {result.comparableSymbols} 个，可执行 {result.executableSymbols} 个，
+          跳过 {result.skippedCount} 个（{formatSkippedReasons(result.skippedReasons)}）。
         </p>
       </section>
 
@@ -189,7 +193,9 @@ export default function MarketPage() {
                     <td data-label="方向">{directionLabel(row.direction)}</td>
                     <td data-label="实际价差">
                       <div>{formatSigned(row.tradableEdgePrice, 6)}</div>
-                      <small className="muted-inline">{formatSigned(row.tradableEdgeBps, 2)} bps</small>
+                      <small className="muted-inline">
+                        {formatSigned(row.tradableEdgePct, 4)}% / {formatSigned(row.tradableEdgeBps, 2)} bps
+                      </small>
                     </td>
                     <td data-label="有效杠杆">
                       <div>{formatNumber(row.effectiveLeverage, 2)}x</div>

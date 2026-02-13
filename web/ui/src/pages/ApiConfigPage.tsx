@@ -11,9 +11,8 @@ import type {
 } from "../api/client";
 
 const EMPTY_PARADEX_FORM: ParadexCredentialsInput = {
-  api_key: "",
-  api_secret: "",
-  passphrase: ""
+  l2_private_key: "",
+  l2_address: ""
 };
 
 const EMPTY_GRVT_FORM: GrvtCredentialsInput = {
@@ -30,9 +29,8 @@ type CredentialField<T> = {
 };
 
 const PARADEX_FIELDS: Array<CredentialField<ParadexCredentialsInput>> = [
-  { key: "api_key", label: "API Key", placeholder: "请输入 Paradex API Key" },
-  { key: "api_secret", label: "API Secret", placeholder: "请输入 Paradex API Secret" },
-  { key: "passphrase", label: "Passphrase（可选）", placeholder: "请输入 Paradex Passphrase", optional: true }
+  { key: "l2_private_key", label: "L2 私钥", placeholder: "请输入 Paradex L2 私钥" },
+  { key: "l2_address", label: "L2 地址", placeholder: "请输入 Paradex L2 地址" }
 ];
 
 const GRVT_FIELDS: Array<CredentialField<GrvtCredentialsInput>> = [
@@ -363,6 +361,9 @@ export default function ApiConfigPage() {
                         {visible ? "隐藏" : "显示"}
                       </button>
                     </div>
+                    {field.key === "private_key" ? (
+                      <small className="muted-inline">必须为十六进制字符串，可带 0x 前缀。</small>
+                    ) : null}
                   </div>
                 );
               })}
@@ -370,7 +371,7 @@ export default function ApiConfigPage() {
           </div>
 
           <p className="hint">
-            必填建议：Paradex 需要 API Key + API Secret，GRVT 需要 API Key + Private Key + Trading Account ID。
+            必填建议：Paradex 需要 L2 私钥 + L2 地址，GRVT 需要 API Key + Private Key + Trading Account ID。
           </p>
 
           <div className="action-row action-row-3">

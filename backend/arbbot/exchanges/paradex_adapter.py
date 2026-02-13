@@ -36,11 +36,15 @@ class ParadexAdapter(BaseExchangeAdapter):
 
         kwargs = {
             "enableRateLimit": True,
-            "apiKey": self.config.credentials.api_key,
-            "secret": self.config.credentials.api_secret,
+            "walletAddress": self.config.credentials.l2_address,
+            "privateKey": self.config.credentials.l2_private_key,
+            "options": {
+                "paradexAccount": {
+                    "privateKey": self.config.credentials.l2_private_key,
+                    "address": self.config.credentials.l2_address,
+                }
+            },
         }
-        if self.config.credentials.passphrase:
-            kwargs["password"] = self.config.credentials.passphrase
 
         self._client = ccxt.paradex(kwargs)
         await self._client.load_markets()

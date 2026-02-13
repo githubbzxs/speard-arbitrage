@@ -14,7 +14,7 @@ class CredentialsRepository:
     """负责交易所凭证的持久化与状态查询。"""
 
     _ALLOWED_FIELDS: dict[str, tuple[str, ...]] = {
-        "paradex": ("api_key", "api_secret", "passphrase"),
+        "paradex": ("l2_private_key", "l2_address"),
         "grvt": ("api_key", "api_secret", "private_key", "trading_account_id"),
     }
 

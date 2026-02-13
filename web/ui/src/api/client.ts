@@ -17,16 +17,15 @@ import type {
 const REQUEST_TIMEOUT_MS = 8000;
 const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL ?? "").trim();
 
-const PARADEX_FIELDS = ["api_key", "api_secret", "passphrase"] as const;
+const PARADEX_FIELDS = ["l2_private_key", "l2_address"] as const;
 const GRVT_FIELDS = ["private_key", "trading_account_id", "api_key"] as const;
 
 export type ParadexCredentialField = (typeof PARADEX_FIELDS)[number];
 export type GrvtCredentialField = (typeof GRVT_FIELDS)[number];
 
 export interface ParadexCredentialsInput {
-  api_key: string;
-  api_secret: string;
-  passphrase: string;
+  l2_private_key: string;
+  l2_address: string;
 }
 
 export interface GrvtCredentialsInput {
@@ -69,9 +68,8 @@ export type CredentialsValidationSource = "saved" | "draft";
 
 export const DEFAULT_CREDENTIALS_STATUS: CredentialsStatus = {
   paradex: {
-    api_key: { configured: false, masked: "" },
-    api_secret: { configured: false, masked: "" },
-    passphrase: { configured: false, masked: "" }
+    l2_private_key: { configured: false, masked: "" },
+    l2_address: { configured: false, masked: "" }
   },
   grvt: {
     private_key: { configured: false, masked: "" },
@@ -83,9 +81,8 @@ export const DEFAULT_CREDENTIALS_STATUS: CredentialsStatus = {
 function cloneDefaultCredentialsStatus(): CredentialsStatus {
   return {
     paradex: {
-      api_key: { configured: false, masked: "" },
-      api_secret: { configured: false, masked: "" },
-      passphrase: { configured: false, masked: "" }
+      l2_private_key: { configured: false, masked: "" },
+      l2_address: { configured: false, masked: "" }
     },
     grvt: {
       private_key: { configured: false, masked: "" },
@@ -576,6 +573,7 @@ function normalizeMarketSpreadRow(data: unknown): MarketTopSpreadRow | null {
     grvtMid: pickNumber(record, ["grvt_mid", "grvtMid"], 0),
     referenceMid: pickNumber(record, ["reference_mid", "referenceMid"], 0),
     tradableEdgePrice: pickNumber(record, ["tradable_edge_price", "tradableEdgePrice"], 0),
+    tradableEdgePct: pickNumber(record, ["tradable_edge_pct", "tradableEdgePct"], 0),
     tradableEdgeBps: pickNumber(record, ["tradable_edge_bps", "tradableEdgeBps"], 0),
     direction: pickString(record, ["direction"], "unknown"),
     paradexMaxLeverage: pickNumber(record, ["paradex_max_leverage", "paradexMaxLeverage"], 1),
@@ -599,6 +597,9 @@ export function normalizeMarketTopSpreads(data: unknown): MarketTopSpreadsRespon
     updatedAt: "",
     scanIntervalSec: 300,
     limit: 10,
+    configuredSymbols: 0,
+    comparableSymbols: 0,
+    executableSymbols: 0,
     scannedSymbols: 0,
     totalSymbols: 0,
     skippedCount: 0,
@@ -638,12 +639,31 @@ export function normalizeMarketTopSpreads(data: unknown): MarketTopSpreadsRespon
   const paradexLegRaw = pickString(feeProfileRecord ?? {}, ["paradex_leg", "paradexLeg"], "taker");
   const grvtLegRaw = pickString(feeProfileRecord ?? {}, ["grvt_leg", "grvtLeg"], "maker");
   const lastErrorRaw = record.last_error ?? record.lastError;
+  const configuredSymbols = Math.max(
+    0,
+    pickNumber(record, ["configured_symbols", "configuredSymbols"], fallback.configuredSymbols)
+  );
+  const comparableSymbols = Math.max(
+    0,
+    pickNumber(record, ["comparable_symbols", "comparableSymbols"], fallback.comparableSymbols)
+  );
+  const executableSymbols = Math.max(
+    0,
+    pickNumber(record, ["executable_symbols", "executableSymbols"], rows.length)
+  );
+  const scannedSymbols = Math.max(
+    0,
+    pickNumber(record, ["scanned_symbols", "scannedSymbols"], comparableSymbols)
+  );
 
   return {
     updatedAt: pickString(record, ["updated_at", "updatedAt"], fallback.updatedAt),
     scanIntervalSec: pickNumber(record, ["scan_interval_sec", "scanIntervalSec"], fallback.scanIntervalSec),
     limit: Math.max(1, pickNumber(record, ["limit"], fallback.limit)),
-    scannedSymbols: Math.max(0, pickNumber(record, ["scanned_symbols", "scannedSymbols"], fallback.scannedSymbols)),
+    configuredSymbols,
+    comparableSymbols,
+    executableSymbols,
+    scannedSymbols,
     totalSymbols: Math.max(0, pickNumber(record, ["total_symbols", "totalSymbols"], rows.length)),
     skippedCount: Math.max(0, pickNumber(record, ["skipped_count", "skippedCount"], fallback.skippedCount)),
     skippedReasons: normalizedSkippedReasons,

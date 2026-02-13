@@ -163,7 +163,8 @@ class ExchangeCredentials:
 
     api_key: str = ""
     api_secret: str = ""
-    passphrase: str = ""
+    l2_private_key: str = ""
+    l2_address: str = ""
     private_key: str = ""
     trading_account_id: str = ""
 
@@ -311,9 +312,8 @@ class AppConfig:
             rest_url=os.getenv("PARADEX_REST_URL", "https://api.prod.paradex.trade"),
             ws_url=os.getenv("PARADEX_WS_URL", "wss://ws.api.prod.paradex.trade/v1"),
             credentials=ExchangeCredentials(
-                api_key=os.getenv("PARADEX_API_KEY", ""),
-                api_secret=os.getenv("PARADEX_API_SECRET", ""),
-                passphrase=os.getenv("PARADEX_API_PASSPHRASE", ""),
+                l2_private_key=os.getenv("PARADEX_L2_PRIVATE_KEY", ""),
+                l2_address=os.getenv("PARADEX_L2_ADDRESS", ""),
             ),
         )
 

@@ -117,6 +117,21 @@
   - Impact：`backend/arbbot/web/api.py`、`backend/tests/test_api_market_top_spreads.py`。
   - Verify：仅保存凭证后访问 `GET /api/market/top-spreads` 可直接返回真实扫描结果。
 
+- [2026-02-13] Paradex 凭证改为 L2 私钥 + L2 地址，并去除浅色切换
+  - Why：Paradex 当前接入以 L2 账户签名为主，旧 `api_secret/passphrase` 口径不匹配；界面固定深色可减少配置歧义。
+  - Impact：`backend/arbbot/config.py`、`backend/arbbot/web/api.py`、`backend/arbbot/strategy/orchestrator.py`、`backend/arbbot/storage/credentials_repository.py`、`backend/arbbot/exchanges/paradex_adapter.py`、`backend/arbbot/security/credentials_validator.py`、`.env.example`、`web/ui/src/pages/ApiConfigPage.tsx`、`web/ui/src/api/client.ts`、`web/ui/src/App.tsx`。
+  - Verify：`python -m pytest backend/tests`、`cd web/ui && npm run build`，并确认 API 配置页 Paradex 仅有两项字段。
+
+- [2026-02-13] 行情页新增“配置/可比/可执行”计数并统一套利空间为 `% + bps`
+  - Why：解释“下单页 10 个币对但行情页仅显示 7 个”的过滤差异，提升跨币种可比性与可读性。
+  - Impact：`backend/arbbot/market/scanner.py`、`backend/arbbot/web/api.py`、`backend/tests/test_api_market_top_spreads.py`、`web/ui/src/pages/MarketPage.tsx`、`web/ui/src/types.ts`、`web/ui/src/api/client.ts`。
+  - Verify：`GET /api/market/top-spreads` 返回 `configured_symbols/comparable_symbols/executable_symbols` 与 `tradable_edge_pct`，前端行情页显示 `% + bps`。
+
+- [2026-02-13] GRVT 私钥非十六进制报错改为可读提示
+  - Why：原始异常 `Non-hexadecimal digit found` 对用户不可定位，需明确字段与修复方向。
+  - Impact：`backend/arbbot/market/scanner.py`、`backend/arbbot/security/credentials_validator.py`、`backend/tests/test_market_scanner_private_key_validation.py`、`backend/tests/test_api_credentials.py`、`web/ui/src/pages/ApiConfigPage.tsx`。
+  - Verify：填写非法 GRVT `private_key` 时，凭证校验与行情扫描都返回“GRVT private_key 格式错误：必须是十六进制字符串（可带 0x 前缀）”。
+
 ## Commands
 - 后端测试：`python -m pytest backend/tests`
 - 后端启动：`python backend/main.py`

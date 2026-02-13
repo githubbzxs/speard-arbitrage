@@ -84,6 +84,7 @@ export interface MarketTopSpreadRow {
   grvtMid: number;
   referenceMid: number;
   tradableEdgePrice: number;
+  tradableEdgePct: number;
   tradableEdgeBps: number;
   direction: string;
   paradexMaxLeverage: number;
@@ -105,6 +106,9 @@ export interface MarketTopSpreadsResponse {
   updatedAt: string;
   scanIntervalSec: number;
   limit: number;
+  configuredSymbols: number;
+  comparableSymbols: number;
+  executableSymbols: number;
   scannedSymbols: number;
   totalSymbols: number;
   skippedCount: number;
