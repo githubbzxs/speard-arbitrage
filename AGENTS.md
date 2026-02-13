@@ -102,6 +102,11 @@
   - Impact：`web/ui/src/styles.css`、`web/ui/src/pages/MarketPage.tsx`。
   - Verify：浏览器移动端模式下可通过底部导航切页，行情表格可读。
 
+- [2026-02-13] 行情扫描前自动注入已保存凭证
+  - Why：避免“网页已保存凭证但 TopSpreads 仍空白”，减少手动修改 `.env` 或重复“应用凭证”步骤。
+  - Impact：`backend/arbbot/web/api.py`、`backend/tests/test_api_market_top_spreads.py`。
+  - Verify：仅保存凭证后访问 `GET /api/market/top-spreads` 可直接返回真实扫描结果。
+
 ## Commands
 - 后端测试：`python -m pytest backend/tests`
 - 后端启动：`python backend/main.py`
@@ -129,5 +134,5 @@
   - 验证：迁移后运行 `python -m pytest backend/tests`，警告应减少。
 - 现象：`/api/market/top-spreads` 依赖 GRVT 私有凭证。
   - 原因：GRVT 最大杠杆仅可通过私有接口获取，已移除回退杠杆。
-  - 修复：在 API 配置页填写并应用 `grvt.api_key/private_key/trading_account_id`，再启动扫描。
+  - 修复：在 API 配置页保存 `grvt.api_key/private_key/trading_account_id`（扫描前会自动注入运行时）。
   - 验证：`GET /api/market/top-spreads` 返回 `rows` 且 `last_error` 为空。
