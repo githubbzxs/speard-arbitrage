@@ -288,7 +288,7 @@ export default function TradePage() {
 
         <div className="form-block">
           <label htmlFor="trade-symbol-select">交易标的（仅 Top10 候选）</label>
-          <div className="inline-form">
+          <div className="inline-form trade-symbol-inline-form">
             <select
               id="trade-symbol-select"
               value={selectedSymbol}
@@ -306,7 +306,7 @@ export default function TradePage() {
               )}
             </select>
             <button
-              className="btn btn-ghost"
+              className="btn btn-ghost trade-symbol-btn"
               type="button"
               onClick={() => void loadTradeSelection(true)}
               disabled={isBusy || selectionSaving || selectionLoading}
@@ -314,7 +314,7 @@ export default function TradePage() {
               {selectionLoading ? "刷新中..." : "刷新 Top10"}
             </button>
             <button
-              className="btn btn-secondary"
+              className="btn btn-secondary trade-symbol-btn"
               type="button"
               onClick={() => void onApplyTradeSymbol()}
               disabled={isBusy || selectionSaving || selectionLoading || !selectedSymbol}
@@ -330,7 +330,9 @@ export default function TradePage() {
           </p>
           {!selectedTradeSymbol ? <p className="hint">请先点击“应用交易标的”，然后才能启动引擎。</p> : null}
           {selectedCandidate ? (
-            <p className="hint">候选口径：{formatSigned(selectedCandidate.tradableEdgePct, 4)}%</p>
+            <p className="hint">
+              候选口径：{formatSigned(selectedCandidate.tradableEdgePct, 4)}%，Z-score {formatSigned(selectedCandidate.zscore, 3)}
+            </p>
           ) : null}
         </div>
 

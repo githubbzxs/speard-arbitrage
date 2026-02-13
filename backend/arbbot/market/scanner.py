@@ -3,8 +3,12 @@
 from __future__ import annotations
 
 import asyncio
+import json
+import sqlite3
 import time
+from collections import deque
 from decimal import Decimal, InvalidOperation
+from statistics import mean, pstdev
 from typing import Any
 
 import ccxt.async_support as ccxt  # type: ignore
@@ -179,6 +183,77 @@ class NominalSpreadScanner:
         self._scanned_symbols = 0
         self._skipped_reasons: dict[str, int] = {}
         self._lock = asyncio.Lock()
+        self._history_by_symbol: dict[str, deque[Decimal]] = {}
+        self._history_seeded_symbols: set[str] = set()
+
+    def _history_capacity(self) -> int:
+        return max(self._config.strategy.ma_window, self._config.strategy.std_window) * 2
+
+    def _history_for(self, symbol: str) -> deque[Decimal]:
+        return self._history_by_symbol.setdefault(symbol, deque(maxlen=self._history_capacity()))
+
+    def _seed_history_from_repository(self, symbol: str) -> None:
+        if symbol in self._history_seeded_symbols:
+            return
+        self._history_seeded_symbols.add(symbol)
+
+        sqlite_path = str(self._config.storage.sqlite_path).strip()
+        if not sqlite_path:
+            return
+
+        history = self._history_for(symbol)
+
+        try:
+            conn = sqlite3.connect(sqlite_path)
+            try:
+                rows = conn.execute(
+                    """
+                    SELECT data_json
+                    FROM symbol_snapshots
+                    WHERE symbol = ?
+                    ORDER BY id DESC
+                    LIMIT ?
+                    """,
+                    (symbol, self._history_capacity()),
+                ).fetchall()
+            finally:
+                conn.close()
+        except Exception:
+            return
+
+        for row in reversed(rows):
+            if not row:
+                continue
+            raw_payload = row[0]
+            if not isinstance(raw_payload, str) or not raw_payload.strip():
+                continue
+            try:
+                parsed = json.loads(raw_payload)
+            except Exception:
+                continue
+            if not isinstance(parsed, dict):
+                continue
+            value = _to_decimal(parsed.get("spread_bps"))
+            if value is None:
+                continue
+            history.append(value)
+
+    def _compute_zscore(self, symbol: str, signed_edge_bps: Decimal) -> Decimal:
+        self._seed_history_from_repository(symbol)
+        history = self._history_for(symbol)
+        history.append(signed_edge_bps)
+
+        samples = list(history)
+        if len(samples) < self._config.strategy.min_samples:
+            return Decimal("0")
+
+        ma_window = max(1, min(self._config.strategy.ma_window, len(samples)))
+        std_window = max(1, min(self._config.strategy.std_window, len(samples)))
+        ma_value = Decimal(str(mean([float(x) for x in samples[-ma_window:]])))
+        std_value = Decimal(str(pstdev([float(x) for x in samples[-std_window:]])))
+        if std_value <= 0:
+            return Decimal("0")
+        return (signed_edge_bps - ma_value) / std_value
 
     async def get_top_spreads(
         self,
@@ -188,7 +263,14 @@ class NominalSpreadScanner:
         resolved_limit = max(1, min(int(limit), MAX_TOP_LIMIT))
         await self._ensure_cache(force_refresh=force_refresh)
 
-        sorted_rows = sorted(self._rows, key=lambda item: item["gross_nominal_spread"], reverse=True)
+        sorted_rows = sorted(
+            self._rows,
+            key=lambda item: (
+                abs(float(item.get("zscore", 0.0))),
+                float(item.get("gross_nominal_spread", 0.0)),
+            ),
+            reverse=True,
+        )
 
         return {
             "updated_at": self._updated_at,
@@ -340,6 +422,7 @@ class NominalSpreadScanner:
         paradex_mid = (paradex_bid + paradex_ask) / Decimal("2")
         grvt_mid = (grvt_bid + grvt_ask) / Decimal("2")
         reference_mid = (paradex_mid + grvt_mid) / Decimal("2")
+        symbol = f"{base_asset}-PERP"
 
         # 口径对齐执行引擎：Paradex taker + GRVT maker。
         edge_sell_paradex_buy_grvt = paradex_bid - grvt_bid
@@ -359,6 +442,13 @@ class NominalSpreadScanner:
         if reference_mid > 0:
             tradable_edge_bps = (tradable_edge_price / reference_mid) * Decimal("10000")
         tradable_edge_pct = tradable_edge_bps / Decimal("100")
+        edge_para_to_grvt_bps = Decimal("0")
+        edge_grvt_to_para_bps = Decimal("0")
+        if reference_mid > 0:
+            edge_para_to_grvt_bps = ((grvt_bid - paradex_ask) / reference_mid) * Decimal("10000")
+            edge_grvt_to_para_bps = ((paradex_bid - grvt_ask) / reference_mid) * Decimal("10000")
+        signed_edge_bps = edge_para_to_grvt_bps if edge_para_to_grvt_bps >= edge_grvt_to_para_bps else -edge_grvt_to_para_bps
+        zscore = self._compute_zscore(symbol, signed_edge_bps)
 
         effective_leverage = min(_sanitize_leverage(paradex_max_leverage), _sanitize_leverage(grvt_max_leverage))
 
@@ -376,7 +466,7 @@ class NominalSpreadScanner:
 
         return (
             {
-                "symbol": f"{base_asset}-PERP",
+                "symbol": symbol,
                 "base_asset": base_asset,
                 "paradex_market": paradex_market,
                 "grvt_market": grvt_market,
@@ -403,6 +493,7 @@ class NominalSpreadScanner:
                     "paradex": paradex_fee_source,
                     "grvt": grvt_fee_source,
                 },
+                "zscore": float(zscore),
                 "updated_at": utc_iso(),
             },
             None,

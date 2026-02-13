@@ -55,6 +55,7 @@ export interface TradeTopCandidate {
   tradableEdgePct: number;
   tradableEdgeBps: number;
   grossNominalSpread: number;
+  zscore: number;
 }
 
 export interface TradeSelection {
@@ -108,6 +109,7 @@ export interface MarketTopSpreadRow {
   grossNominalSpread: number;
   feeCostEstimate: number;
   netNominalSpread: number;
+  zscore: number;
   paradexFeeRate: number;
   grvtFeeRate: number;
   feeSource: {

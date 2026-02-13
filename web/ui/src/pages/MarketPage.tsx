@@ -147,7 +147,10 @@ export default function MarketPage() {
   };
 
   const topRows = useMemo(
-    () => [...result.rows].sort((a, b) => toNominalSpreadPct(b) - toNominalSpreadPct(a)).slice(0, TOP_LIMIT),
+    () =>
+      [...result.rows]
+        .sort((a, b) => Math.abs(b.zscore) - Math.abs(a.zscore) || toNominalSpreadPct(b) - toNominalSpreadPct(a))
+        .slice(0, TOP_LIMIT),
     [result.rows]
   );
 
@@ -180,6 +183,7 @@ export default function MarketPage() {
 
         <p className="hint">
           展示口径已统一为百分比：实际价差(%) 使用可执行价差百分比；名义价差(%) 与净名义价差(%) 均按参考中间价换算。
+          Top10 按 |Z-score| 降序排序。
         </p>
         <p className="hint">{marketWsHint(wsStatus)}</p>
         <p className="hint">
@@ -202,6 +206,7 @@ export default function MarketPage() {
                 <th>#</th>
                 <th>币对</th>
                 <th>实际价差(%)</th>
+                <th>Z-score</th>
                 <th>有效杠杆</th>
                 <th>名义价差(%)</th>
                 <th>净名义价差(%)</th>
@@ -210,7 +215,7 @@ export default function MarketPage() {
             <tbody>
               {topRows.length === 0 ? (
                 <tr>
-                  <td colSpan={6} className="empty-cell">
+                  <td colSpan={7} className="empty-cell">
                     暂无行情数据
                   </td>
                 </tr>
@@ -221,6 +226,9 @@ export default function MarketPage() {
                     <td data-label="币对">{row.symbol}</td>
                     <td data-label="实际价差(%)">
                       <strong>{formatSigned(row.tradableEdgePct, 4)}%</strong>
+                    </td>
+                    <td data-label="Z-score">
+                      <strong>{formatSigned(row.zscore, 3)}</strong>
                     </td>
                     <td data-label="有效杠杆">
                       <strong>{formatNumber(row.effectiveLeverage, 2)}x</strong>

@@ -156,6 +156,7 @@ def create_app(config: AppConfig) -> FastAPI:
                     "tradable_edge_pct": parse_float(raw_row.get("tradable_edge_pct")),
                     "tradable_edge_bps": parse_float(raw_row.get("tradable_edge_bps")),
                     "gross_nominal_spread": parse_float(raw_row.get("gross_nominal_spread")),
+                    "zscore": parse_float(raw_row.get("zscore")),
                 }
             )
 

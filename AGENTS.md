@@ -167,6 +167,16 @@
   - Impact：`backend/arbbot/web/api.py`、`web/ui/src/api/client.ts`、`web/ui/src/pages/TradePage.tsx`。
   - Verify：`python -m pytest backend/tests`、`cd web/ui && npm run build`，并确认下单页不再频繁出现 8s 超时，运行中若全 0 会出现提示文案。
 
+- [2026-02-13] Top10 新增 Z-score 并按 `|Z-score|` 排序
+  - Why：用户要求 Top10 展示并使用 Z-score 排序，避免仅按名义价差筛选导致“信号强弱”不可见。
+  - Impact：`backend/arbbot/market/scanner.py`、`backend/arbbot/web/api.py`、`backend/tests/test_market_scanner_zscore.py`、`web/ui/src/api/client.ts`、`web/ui/src/types.ts`、`web/ui/src/pages/MarketPage.tsx`、`web/ui/src/pages/TradePage.tsx`。
+  - Verify：`python -m pytest backend/tests`、`cd web/ui && npm run build`，并确认行情页 Top10 增加 `Z-score` 列且排序以 `|Z-score|` 为主。
+
+- [2026-02-13] 下单页交易标的选择区改为稳定栅格，消除左右跳动
+  - Why：修复下单页操作区“按钮一会左一会右”的布局抖动，提升操作稳定性。
+  - Impact：`web/ui/src/pages/TradePage.tsx`、`web/ui/src/styles.css`。
+  - Verify：`cd web/ui && npm run build`，并在下单页切换/刷新时确认交易标的操作区不再抖动。
+
 ## Commands
 - 后端测试：`python -m pytest backend/tests`
 - 后端启动：`python backend/main.py`

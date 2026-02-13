@@ -533,6 +533,7 @@ function normalizeMarketSpreadRow(data: unknown): MarketTopSpreadRow | null {
     grossNominalSpread: pickNumber(record, ["gross_nominal_spread", "grossNominalSpread"], 0),
     feeCostEstimate: pickNumber(record, ["fee_cost_estimate", "feeCostEstimate"], 0),
     netNominalSpread: pickNumber(record, ["net_nominal_spread", "netNominalSpread"], 0),
+    zscore: pickNumber(record, ["zscore", "z_score", "zScore"], 0),
     paradexFeeRate: pickNumber(record, ["paradex_fee_rate", "paradexFeeRate"], 0),
     grvtFeeRate: pickNumber(record, ["grvt_fee_rate", "grvtFeeRate"], 0),
     feeSource: {
@@ -568,7 +569,7 @@ export function normalizeMarketTopSpreads(data: unknown): MarketTopSpreadsRespon
   const rows = extractArray(record.rows)
     .map((item) => normalizeMarketSpreadRow(item))
     .filter((item): item is MarketTopSpreadRow => item !== null)
-    .sort((a, b) => b.grossNominalSpread - a.grossNominalSpread);
+    .sort((a, b) => Math.abs(b.zscore) - Math.abs(a.zscore) || b.grossNominalSpread - a.grossNominalSpread);
 
   const skippedReasonsRecord = toRecord(record.skipped_reasons) ?? toRecord(record.skippedReasons) ?? {};
   const normalizedSkippedReasons: Record<string, number> = {};
@@ -627,7 +628,8 @@ function normalizeTradeTopCandidate(data: unknown): TradeTopCandidate | null {
     grvtMarket: pickString(record, ["grvt_market", "grvtMarket"], ""),
     tradableEdgePct: pickNumber(record, ["tradable_edge_pct", "tradableEdgePct"], 0),
     tradableEdgeBps: pickNumber(record, ["tradable_edge_bps", "tradableEdgeBps"], 0),
-    grossNominalSpread: pickNumber(record, ["gross_nominal_spread", "grossNominalSpread"], 0)
+    grossNominalSpread: pickNumber(record, ["gross_nominal_spread", "grossNominalSpread"], 0),
+    zscore: pickNumber(record, ["zscore", "z_score", "zScore"], 0)
   };
 }
 

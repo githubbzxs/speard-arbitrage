@@ -578,6 +578,14 @@ tbody tr:hover {
   gap: 8px;
 }
 
+.trade-symbol-inline-form {
+  grid-template-columns: minmax(0, 1fr) 120px 140px;
+}
+
+.trade-symbol-btn {
+  white-space: nowrap;
+}
+
 select,
 input {
   width: 100%;
@@ -978,6 +986,10 @@ input:focus {
   }
 
   .inline-form {
+    grid-template-columns: 1fr;
+  }
+
+  .trade-symbol-inline-form {
     grid-template-columns: 1fr;
   }
 
