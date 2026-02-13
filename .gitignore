@@ -1,0 +1,26 @@
+﻿# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.venv/
+venv/
+
+# 测试与缓存
+.pytest_cache/
+.mypy_cache/
+.coverage
+
+# Node
+web/ui/node_modules/
+web/ui/dist/
+
+# 运行数据
+backend/data/
+logs/
+
+# 本地环境
+.env
+
+# 参考仓库（仅本地研究）
+_reference/

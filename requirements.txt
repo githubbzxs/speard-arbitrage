@@ -1,0 +1,8 @@
+﻿fastapi==0.116.1
+uvicorn==0.35.0
+python-dotenv==1.1.1
+ccxt==4.5.4
+grvt-pysdk==0.1.19
+websockets==15.0.1
+pytest==8.4.1
+pytest-asyncio==1.1.0
