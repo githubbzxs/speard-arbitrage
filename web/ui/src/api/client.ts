@@ -1,0 +1,355 @@
+import { DEFAULT_STATUS } from "../types";
+import type {
+  ActionResult,
+  DashboardStatus,
+  EngineStatus,
+  EventLevel,
+  EventLog,
+  SymbolParamsPayload,
+  SymbolRow,
+  TradingMode
+} from "../types";
+
+const REQUEST_TIMEOUT_MS = 8000;
+const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL ?? "").trim();
+
+function buildUrl(path: string): string {
+  if (/^https?:\/\//i.test(path)) {
+    return path;
+  }
+
+  if (!API_BASE_URL) {
+    return path;
+  }
+
+  const normalizedBase = API_BASE_URL.replace(/\/+$/, "");
+  const normalizedPath = path.startsWith("/") ? path : `/${path}`;
+  return `${normalizedBase}${normalizedPath}`;
+}
+
+async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
+  const controller = new AbortController();
+  const timer = window.setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+  const headers = new Headers(init?.headers ?? {});
+
+  if (init?.body && !headers.has("Content-Type")) {
+    headers.set("Content-Type", "application/json");
+  }
+
+  try {
+    const response = await fetch(buildUrl(path), {
+      ...init,
+      headers,
+      signal: controller.signal
+    });
+
+    const rawText = await response.text();
+    const parsedData = rawText ? tryParseJson(rawText) : null;
+
+    if (!response.ok) {
+      const detail = readErrorDetail(parsedData, rawText, response.statusText);
+      throw new Error(`HTTP ${response.status}: ${detail}`);
+    }
+
+    if (parsedData !== null) {
+      return parsedData as T;
+    }
+
+    return (rawText as unknown) as T;
+  } catch (error) {
+    if (error instanceof DOMException && error.name === "AbortError") {
+      throw new Error(`请求超时（${REQUEST_TIMEOUT_MS}ms）`);
+    }
+    throw error;
+  } finally {
+    window.clearTimeout(timer);
+  }
+}
+
+function tryParseJson(value: string): unknown | null {
+  try {
+    return JSON.parse(value) as unknown;
+  } catch {
+    return null;
+  }
+}
+
+function readErrorDetail(data: unknown, rawText: string, fallback: string): string {
+  const record = toRecord(data);
+  if (record) {
+    const detail = pickString(record, ["detail", "message", "error"], "");
+    if (detail) {
+      return detail;
+    }
+  }
+
+  if (rawText.trim().length > 0) {
+    return rawText;
+  }
+
+  return fallback || "请求失败";
+}
+
+export function getErrorMessage(error: unknown): string {
+  if (error instanceof Error && error.message.trim()) {
+    return error.message;
+  }
+  return "发生未知错误";
+}
+
+export function toRecord(value: unknown): Record<string, unknown> | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+  return value as Record<string, unknown>;
+}
+
+function pickString(record: Record<string, unknown>, keys: string[], fallback: string): string {
+  for (const key of keys) {
+    const value = record[key];
+    if (typeof value === "string" && value.trim()) {
+      return value;
+    }
+  }
+  return fallback;
+}
+
+function pickNumber(record: Record<string, unknown>, keys: string[], fallback: number): number {
+  for (const key of keys) {
+    const value = record[key];
+    if (typeof value === "number" && Number.isFinite(value)) {
+      return value;
+    }
+    if (typeof value === "string" && value.trim()) {
+      const parsed = Number(value);
+      if (Number.isFinite(parsed)) {
+        return parsed;
+      }
+    }
+  }
+  return fallback;
+}
+
+function parseEngineStatus(value: string): EngineStatus {
+  const normalized = value.toLowerCase();
+
+  if (normalized === "running") {
+    return "running";
+  }
+  if (normalized === "stopped") {
+    return "stopped";
+  }
+  if (normalized === "starting") {
+    return "starting";
+  }
+  if (normalized === "stopping") {
+    return "stopping";
+  }
+  if (normalized === "error") {
+    return "error";
+  }
+  return "unknown";
+}
+
+function parseMode(value: string): TradingMode {
+  return value === "zero_wear" ? "zero_wear" : "normal_arb";
+}
+
+function parseEventLevel(value: string): EventLevel {
+  const normalized = value.toLowerCase();
+  if (normalized === "warn" || normalized === "warning") {
+    return "warn";
+  }
+  if (normalized === "error") {
+    return "error";
+  }
+  return "info";
+}
+
+function extractArray(value: unknown): unknown[] {
+  if (Array.isArray(value)) {
+    return value;
+  }
+
+  const record = toRecord(value);
+  if (!record) {
+    return [];
+  }
+
+  const candidates = ["items", "rows", "list", "data", "symbols", "events"];
+  for (const key of candidates) {
+    const candidate = record[key];
+    if (Array.isArray(candidate)) {
+      return candidate;
+    }
+  }
+
+  return [];
+}
+
+export function normalizeStatus(data: unknown): DashboardStatus {
+  const record = toRecord(data);
+  if (!record) {
+    return { ...DEFAULT_STATUS };
+  }
+
+  const riskRecord = toRecord(record.risk_counts) ?? toRecord(record.riskCounts);
+
+  const normalRisk = riskRecord
+    ? pickNumber(riskRecord, ["normal", "ok", "safe"], 0)
+    : pickNumber(record, ["risk_normal", "normal_count"], 0);
+  const warningRisk = riskRecord
+    ? pickNumber(riskRecord, ["warning", "warn"], 0)
+    : pickNumber(record, ["risk_warning", "warning_count"], 0);
+  const criticalRisk = riskRecord
+    ? pickNumber(riskRecord, ["critical", "high"], 0)
+    : pickNumber(record, ["risk_critical", "critical_count"], 0);
+
+  return {
+    engineStatus: parseEngineStatus(
+      pickString(record, ["engine_status", "engineStatus", "status"], DEFAULT_STATUS.engineStatus)
+    ),
+    mode: parseMode(pickString(record, ["mode"], DEFAULT_STATUS.mode)),
+    netExposure: pickNumber(record, ["net_exposure", "netExposure", "exposure"], 0),
+    dailyVolume: pickNumber(record, ["daily_volume", "dailyVolume", "volume"], 0),
+    riskCounts: {
+      normal: normalRisk,
+      warning: warningRisk,
+      critical: criticalRisk
+    },
+    updatedAt: pickString(record, ["updated_at", "updatedAt", "ts", "timestamp"], new Date().toISOString())
+  };
+}
+
+export function normalizeSymbol(data: unknown): SymbolRow | null {
+  const record = toRecord(data);
+  if (!record) {
+    return null;
+  }
+
+  const symbol = pickString(record, ["symbol", "name", "id"], "");
+  if (!symbol) {
+    return null;
+  }
+
+  return {
+    symbol,
+    spread: pickNumber(record, ["spread", "spread_bps", "spreadBps"], 0),
+    zscore: pickNumber(record, ["zscore", "z_score", "zScore"], 0),
+    position: pickNumber(record, ["position", "net_position", "netPosition"], 0),
+    signal: pickString(record, ["signal"], "neutral"),
+    status: pickString(record, ["status", "state"], "unknown"),
+    updatedAt: pickString(record, ["updated_at", "updatedAt", "ts"], new Date().toISOString())
+  };
+}
+
+export function normalizeSymbols(data: unknown): SymbolRow[] {
+  const rows = extractArray(data)
+    .map((item) => normalizeSymbol(item))
+    .filter((item): item is SymbolRow => item !== null);
+  return rows.sort((a, b) => a.symbol.localeCompare(b.symbol));
+}
+
+export function normalizeEvent(data: unknown): EventLog | null {
+  const record = toRecord(data);
+  if (!record) {
+    return null;
+  }
+
+  const ts = pickString(record, ["ts", "timestamp", "time", "created_at"], new Date().toISOString());
+  const message = pickString(record, ["message", "detail", "msg"], "");
+  if (!message) {
+    return null;
+  }
+
+  const source = pickString(record, ["source", "module", "component"], "system");
+  const id = pickString(
+    record,
+    ["id", "event_id", "eventId"],
+    `${source}-${ts}-${Math.random().toString(36).slice(2, 8)}`
+  );
+
+  return {
+    id,
+    ts,
+    level: parseEventLevel(pickString(record, ["level", "severity"], "info")),
+    source,
+    message
+  };
+}
+
+export function normalizeEvents(data: unknown): EventLog[] {
+  const rows = extractArray(data)
+    .map((item) => normalizeEvent(item))
+    .filter((item): item is EventLog => item !== null);
+  return rows.sort((a, b) => b.ts.localeCompare(a.ts));
+}
+
+function normalizeActionResult(data: unknown, fallback: string): ActionResult {
+  const record = toRecord(data);
+  if (!record) {
+    return {
+      ok: true,
+      message: fallback
+    };
+  }
+
+  return {
+    ok: typeof record.ok === "boolean" ? record.ok : true,
+    message: pickString(record, ["message", "detail"], fallback)
+  };
+}
+
+export const apiClient = {
+  async getStatus(): Promise<DashboardStatus> {
+    const response = await requestJson<unknown>("/api/status");
+    return normalizeStatus(response);
+  },
+
+  async getSymbols(): Promise<SymbolRow[]> {
+    const response = await requestJson<unknown>("/api/symbols");
+    return normalizeSymbols(response);
+  },
+
+  async getEvents(limit = 100): Promise<EventLog[]> {
+    const response = await requestJson<unknown>(`/api/events?limit=${limit}`);
+    return normalizeEvents(response);
+  },
+
+  async startEngine(): Promise<ActionResult> {
+    const response = await requestJson<unknown>("/api/engine/start", {
+      method: "POST"
+    });
+    return normalizeActionResult(response, "引擎启动命令已发送");
+  },
+
+  async stopEngine(): Promise<ActionResult> {
+    const response = await requestJson<unknown>("/api/engine/stop", {
+      method: "POST"
+    });
+    return normalizeActionResult(response, "引擎停止命令已发送");
+  },
+
+  async setMode(mode: TradingMode): Promise<ActionResult> {
+    const response = await requestJson<unknown>("/api/mode", {
+      method: "POST",
+      body: JSON.stringify({ mode })
+    });
+    return normalizeActionResult(response, "模式切换命令已发送");
+  },
+
+  async updateSymbolParams(symbol: string, payload: SymbolParamsPayload): Promise<ActionResult> {
+    const response = await requestJson<unknown>(`/api/symbol/${encodeURIComponent(symbol)}/params`, {
+      method: "POST",
+      body: JSON.stringify(payload)
+    });
+    return normalizeActionResult(response, `已更新 ${symbol} 参数`);
+  },
+
+  async flattenSymbol(symbol: string): Promise<ActionResult> {
+    const response = await requestJson<unknown>(`/api/symbol/${encodeURIComponent(symbol)}/flatten`, {
+      method: "POST"
+    });
+    return normalizeActionResult(response, `${symbol} 平仓命令已发送`);
+  }
+};
