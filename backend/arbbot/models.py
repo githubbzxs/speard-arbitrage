@@ -260,6 +260,12 @@ class SymbolSnapshot:
     symbol: str
     status: str
     signal: str
+    paradex_bid: Decimal
+    paradex_ask: Decimal
+    paradex_mid: Decimal
+    grvt_bid: Decimal
+    grvt_ask: Decimal
+    grvt_mid: Decimal
     spread_bps: Decimal
     spread_price: Decimal
     zscore: Decimal
@@ -275,6 +281,12 @@ class SymbolSnapshot:
             "symbol": self.symbol,
             "status": self.status,
             "signal": self.signal,
+            "paradex_bid": float(self.paradex_bid),
+            "paradex_ask": float(self.paradex_ask),
+            "paradex_mid": float(self.paradex_mid),
+            "grvt_bid": float(self.grvt_bid),
+            "grvt_ask": float(self.grvt_ask),
+            "grvt_mid": float(self.grvt_mid),
             "spread_bps": float(self.spread_bps),
             "spread_price": float(self.spread_price),
             "zscore": float(self.zscore),

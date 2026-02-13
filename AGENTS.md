@@ -62,6 +62,11 @@
   - Impact：VPS `nginx` 站点 `/etc/nginx/sites-available/arbbot.conf`（server_name/certbot 证书与跳转）。
   - Verify：`curl -I http://spread.0xpsyche.me` 返回 301，`curl -I https://spread.0xpsyche.me` 返回 200，`curl https://spread.0xpsyche.me/api/status` 正常。
 
+- [2026-02-13] Symbol 表格新增双交易所实时价格字段
+  - Why：用户需要在页面直接查看 Paradex 与 GRVT 的实际盘口价格，而不只看价差。
+  - Impact：`backend/arbbot/models.py`、`backend/arbbot/strategy/orchestrator.py`、`web/ui/src/types.ts`、`web/ui/src/api/client.ts`、`web/ui/src/App.tsx`、`web/ui/src/utils/format.ts`、`backend/tests/test_symbol_snapshot_prices.py`。
+  - Verify：`python -m pytest backend/tests`、`cd web/ui && npm run build`，并确认页面出现 `Paradex Bid/Ask` 与 `GRVT Bid/Ask` 列。
+
 ## Commands
 - 后端测试：`python -m pytest backend/tests`
 - 后端启动：`python backend/main.py`

@@ -311,10 +311,24 @@ class ArbitrageOrchestrator:
                     can_open=can_open,
                     reason=signal.reason,
                 )
+                paradex_bid = paradex_eff.bid if paradex_eff else Decimal("0")
+                paradex_ask = paradex_eff.ask if paradex_eff else Decimal("0")
+                grvt_bid = grvt_eff.bid if grvt_eff else Decimal("0")
+                grvt_ask = grvt_eff.ask if grvt_eff else Decimal("0")
                 snapshot = SymbolSnapshot(
                     symbol=symbol,
                     status=self.engine_status.value,
                     signal=signal.action.value,
+                    paradex_bid=paradex_bid,
+                    paradex_ask=paradex_ask,
+                    paradex_mid=(paradex_bid + paradex_ask) / Decimal("2")
+                    if paradex_bid > 0 and paradex_ask > 0
+                    else Decimal("0"),
+                    grvt_bid=grvt_bid,
+                    grvt_ask=grvt_ask,
+                    grvt_mid=(grvt_bid + grvt_ask) / Decimal("2")
+                    if grvt_bid > 0 and grvt_ask > 0
+                    else Decimal("0"),
                     spread_bps=metrics.signed_edge_bps,
                     spread_price=metrics.signed_edge_price,
                     zscore=metrics.zscore,

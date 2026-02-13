@@ -24,6 +24,21 @@ export function formatSigned(value: number, fractionDigits = 2): string {
   return abs;
 }
 
+export function formatPrice(value: number): string {
+  if (!Number.isFinite(value) || value <= 0) {
+    return "--";
+  }
+
+  const abs = Math.abs(value);
+  if (abs >= 1000) {
+    return formatNumber(value, 2);
+  }
+  if (abs >= 1) {
+    return formatNumber(value, 4);
+  }
+  return formatNumber(value, 6);
+}
+
 export function formatTimestamp(value: string): string {
   if (!value) {
     return "--";

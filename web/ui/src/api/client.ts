@@ -295,6 +295,12 @@ export function normalizeSymbol(data: unknown): SymbolRow | null {
 
   return {
     symbol,
+    paradexBid: pickNumber(record, ["paradex_bid", "paradexBid"], 0),
+    paradexAsk: pickNumber(record, ["paradex_ask", "paradexAsk"], 0),
+    paradexMid: pickNumber(record, ["paradex_mid", "paradexMid"], 0),
+    grvtBid: pickNumber(record, ["grvt_bid", "grvtBid"], 0),
+    grvtAsk: pickNumber(record, ["grvt_ask", "grvtAsk"], 0),
+    grvtMid: pickNumber(record, ["grvt_mid", "grvtMid"], 0),
     spreadBps: pickNumber(record, ["spread_bps", "spreadBps", "spread"], 0),
     spreadPrice: pickNumber(record, ["spread_price", "spreadPrice"], 0),
     zscore: pickNumber(record, ["zscore", "z_score", "zScore"], 0),

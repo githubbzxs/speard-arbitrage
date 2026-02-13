@@ -13,7 +13,7 @@ import type {
 } from "./api/client";
 import { useDashboard } from "./hooks/useDashboard";
 import type { PublicConfig, SymbolParamsPayload, TradingMode } from "./types";
-import { formatNumber, formatSigned, formatTimestamp } from "./utils/format";
+import { formatNumber, formatPrice, formatSigned, formatTimestamp } from "./utils/format";
 
 type ThemeMode = "dark" | "light";
 
@@ -562,6 +562,10 @@ export default function App() {
               <thead>
                 <tr>
                   <th>Symbol</th>
+                  <th>Paradex Bid</th>
+                  <th>Paradex Ask</th>
+                  <th>GRVT Bid</th>
+                  <th>GRVT Ask</th>
                   <th>Spread (bps)</th>
                   <th>Spread (price)</th>
                   <th>ZScore</th>
@@ -574,7 +578,7 @@ export default function App() {
               <tbody>
                 {symbols.length === 0 ? (
                   <tr>
-                    <td colSpan={8} className="empty-cell">
+                    <td colSpan={12} className="empty-cell">
                       当前没有交易对数据
                     </td>
                   </tr>
@@ -582,6 +586,10 @@ export default function App() {
                   symbols.map((item) => (
                     <tr key={item.symbol}>
                       <td>{item.symbol}</td>
+                      <td>{formatPrice(item.paradexBid)}</td>
+                      <td>{formatPrice(item.paradexAsk)}</td>
+                      <td>{formatPrice(item.grvtBid)}</td>
+                      <td>{formatPrice(item.grvtAsk)}</td>
                       <td>{formatSigned(item.spreadBps, 2)}</td>
                       <td>{formatSigned(item.spreadPrice, 2)}</td>
                       <td>{formatNumber(item.zscore, 3)}</td>
@@ -734,9 +742,11 @@ export default function App() {
 
             {selectedSymbolInfo ? (
               <p className="hint">
-                当前 {selectedSymbolInfo.symbol}：spread(bps) {formatSigned(selectedSymbolInfo.spreadBps, 2)} / spread(price){" "}
-                {formatSigned(selectedSymbolInfo.spreadPrice, 2)} / zscore {formatNumber(selectedSymbolInfo.zscore, 3)} / 仓位{" "}
-                {formatSigned(selectedSymbolInfo.position, 4)}
+                当前 {selectedSymbolInfo.symbol}：Paradex {formatPrice(selectedSymbolInfo.paradexBid)} /{" "}
+                {formatPrice(selectedSymbolInfo.paradexAsk)}，GRVT {formatPrice(selectedSymbolInfo.grvtBid)} /{" "}
+                {formatPrice(selectedSymbolInfo.grvtAsk)}，spread(bps) {formatSigned(selectedSymbolInfo.spreadBps, 2)} /
+                spread(price) {formatSigned(selectedSymbolInfo.spreadPrice, 2)} / zscore{" "}
+                {formatNumber(selectedSymbolInfo.zscore, 3)} / 仓位 {formatSigned(selectedSymbolInfo.position, 4)}
               </p>
             ) : (
               <p className="hint">当前没有可操作交易对。</p>

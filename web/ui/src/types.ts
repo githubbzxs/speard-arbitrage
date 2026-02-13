@@ -33,6 +33,12 @@ export const DEFAULT_STATUS: DashboardStatus = {
 
 export interface SymbolRow {
   symbol: string;
+  paradexBid: number;
+  paradexAsk: number;
+  paradexMid: number;
+  grvtBid: number;
+  grvtAsk: number;
+  grvtMid: number;
   spreadBps: number;
   spreadPrice: number;
   zscore: number;
