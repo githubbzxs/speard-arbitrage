@@ -265,9 +265,9 @@ export default function TradePage() {
       return `历史预热中：${marketResult.warmupProgress.symbolsReady}/${marketResult.warmupProgress.symbolsTotal}`;
     }
     if (topRows.length === 0) {
-      return "当前无可执行行情数据";
+      return "当前无 50x 有效杠杆可执行行情数据";
     }
-    return `当前展示全量可比币对 ${topRows.length} 个`;
+    return `当前展示 50x 及以上有效杠杆币对 ${topRows.length} 个`;
   }, [
     marketLoading,
     marketResult.warmupDone,
@@ -439,7 +439,7 @@ export default function TradePage() {
           <section className="panel symbol-panel page-panel">
             <div className="panel-title">
               <h2>当前行情（单表）</h2>
-              <small>全量可比币对</small>
+              <small>仅展示 50x 及以上有效杠杆币对</small>
             </div>
             <p className="hint">
               最近刷新 {formatTimestamp(marketResult.updatedAt)}，扫描周期约 {marketResult.scanIntervalSec} 秒，

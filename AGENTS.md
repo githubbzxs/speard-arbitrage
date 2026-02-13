@@ -7,6 +7,11 @@
 - 数据存储：SQLite + CSV。
 
 ## Decisions
+- [2026-02-13] 行情与候选统一过滤为仅保留 50x 及以上有效杠杆币对
+  - Why：用户明确要求“只要有 50x 杠杆的币”，并避免前端显示与实际候选口径不一致。
+  - Impact：`backend/arbbot/market/scanner.py`、`backend/tests/test_market_scanner_leverage_filter.py`、`web/ui/src/pages/TradePage.tsx`、`web/ui/src/pages/MarketPage.tsx`。
+  - Verify：`python -m pytest backend/tests/test_market_scanner_leverage_filter.py`、`python -m pytest backend/tests`、`cd web/ui && npm run build`。
+
 - [2026-02-13] 套利口径统一为 Paradex taker + GRVT maker
   - Why：对齐目标执行模型（Paradex 吃单、GRVT 挂单），避免扫描口径与实际执行不一致。
   - Impact：`backend/arbbot/strategy/execution_engine.py`、`backend/arbbot/strategy/orchestrator.py`、`backend/arbbot/market/scanner.py`、`backend/tests/test_execution_engine_order_gate.py`、`web/ui/src/api/client.ts`、`web/ui/src/pages/MarketPage.tsx`。

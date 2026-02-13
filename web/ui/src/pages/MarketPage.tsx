@@ -172,7 +172,7 @@ export default function MarketPage() {
     if (topRows.length === 0) {
       return "当前无可执行价差";
     }
-    return `下单配置 ${result.configuredSymbols} 个币对，可比 ${result.comparableSymbols} 个，可执行 ${result.executableSymbols} 个`;
+    return `下单配置 ${result.configuredSymbols} 个币对，50x 可比 ${result.comparableSymbols} 个，可执行 ${result.executableSymbols} 个`;
   }, [loading, result.comparableSymbols, result.configuredSymbols, result.executableSymbols, topRows.length]);
 
   return (
@@ -199,7 +199,8 @@ export default function MarketPage() {
         <p className="hint">{marketWsHint(wsStatus)}</p>
         <p className="hint">
           最近刷新 {formatTimestamp(result.updatedAt)}，扫描周期约 {result.scanIntervalSec} 秒，
-          下单配置 {result.configuredSymbols} 个币对，可比 {result.comparableSymbols} 个，可执行 {result.executableSymbols} 个，
+          下单配置 {result.configuredSymbols} 个币对，50x 可比 {result.comparableSymbols} 个，可执行{" "}
+          {result.executableSymbols} 个，
           跳过 {result.skippedCount} 个（{formatSkippedReasons(result.skippedReasons)}）。
         </p>
       </section>

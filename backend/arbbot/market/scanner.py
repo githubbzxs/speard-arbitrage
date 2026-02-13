@@ -28,10 +28,12 @@ DEFAULT_TOP_LIMIT = 200
 MAX_TOP_LIMIT = 2000
 DEFAULT_SPEED_WINDOW_SEC = 600
 DEFAULT_WARMUP_POLL_SEC = 0.3
+DEFAULT_MIN_EFFECTIVE_LEVERAGE = 50.0
 
 ZSCORE_STATUS_READY = "ready"
 ZSCORE_STATUS_INSUFFICIENT_SAMPLES = "insufficient_samples"
 ZSCORE_STATUS_ZERO_STD = "zero_std"
+SKIP_REASON_EFFECTIVE_LEVERAGE_BELOW_TARGET = "effective_leverage_below_50x"
 
 # 官方兜底费率（当接口字段缺失时使用）：
 # Paradex: https://docs.paradex.trade/risk/fees-and-discounts
@@ -184,6 +186,7 @@ class NominalSpreadScanner:
             self._history_capacity(),
             int(getattr(getattr(config, "market_warmup", None), "history_retention", 2000)),
         )
+        self._min_effective_leverage = DEFAULT_MIN_EFFECTIVE_LEVERAGE
 
         self._rows: list[dict[str, Any]] = []
         self._updated_at = ""
@@ -206,6 +209,14 @@ class NominalSpreadScanner:
         self._warmup_symbol_samples: dict[str, int] = {}
         self._warmup_symbols: list[str] = []
         self._ensure_market_history_schema()
+
+    def _resolve_effective_leverage(self, paradex_max_leverage: Any, grvt_max_leverage: Any) -> float | None:
+        if paradex_max_leverage is None or grvt_max_leverage is None:
+            return None
+        try:
+            return min(_sanitize_leverage(paradex_max_leverage), _sanitize_leverage(grvt_max_leverage))
+        except (TypeError, ValueError):
+            return None
 
     def _edge_pct_history_for(self, symbol: str) -> deque[tuple[float, Decimal]]:
         return self._edge_pct_history_by_symbol.setdefault(symbol, deque(maxlen=240))
@@ -631,20 +642,44 @@ class NominalSpreadScanner:
             grvt_map = self._collect_grvt_markets(grvt_client.markets, grvt_leverage_map)
 
             shared_bases = sorted(set(paradex_map.keys()) & set(grvt_map.keys()))
-            warmup_symbols = [f"{base}-PERP" for base in shared_bases]
-            await self._backfill_missing_history(
-                paradex_client=paradex_client,
-                grvt_client=grvt_client,
-                shared_bases=shared_bases,
-                paradex_map=paradex_map,
-                grvt_map=grvt_map,
-            )
             configured_bases = {
                 str(cfg.base_asset).upper().strip()
                 for cfg in self._config.symbols
                 if cfg.enabled and str(cfg.base_asset).strip()
             }
             skipped_reasons: dict[str, int] = {}
+            target_bases: list[str] = []
+            for base_asset in shared_bases:
+                para_info = paradex_map[base_asset]
+                grvt_info = grvt_map[base_asset]
+                paradex_max_leverage = para_info.get("max_leverage")
+                grvt_max_leverage = grvt_info.get("max_leverage")
+                if paradex_max_leverage is None:
+                    skipped_reasons["paradex_leverage_missing"] = skipped_reasons.get("paradex_leverage_missing", 0) + 1
+                    continue
+                if grvt_max_leverage is None:
+                    skipped_reasons["grvt_leverage_missing"] = skipped_reasons.get("grvt_leverage_missing", 0) + 1
+                    continue
+
+                effective_leverage = self._resolve_effective_leverage(paradex_max_leverage, grvt_max_leverage)
+                if effective_leverage is None:
+                    skipped_reasons["invalid_leverage"] = skipped_reasons.get("invalid_leverage", 0) + 1
+                    continue
+                if effective_leverage < self._min_effective_leverage:
+                    skipped_reasons[SKIP_REASON_EFFECTIVE_LEVERAGE_BELOW_TARGET] = (
+                        skipped_reasons.get(SKIP_REASON_EFFECTIVE_LEVERAGE_BELOW_TARGET, 0) + 1
+                    )
+                    continue
+                target_bases.append(base_asset)
+
+            warmup_symbols = [f"{base}-PERP" for base in target_bases]
+            await self._backfill_missing_history(
+                paradex_client=paradex_client,
+                grvt_client=grvt_client,
+                shared_bases=target_bases,
+                paradex_map=paradex_map,
+                grvt_map=grvt_map,
+            )
             semaphore = asyncio.Semaphore(6)
 
             async def fetch_one(base_asset: str) -> tuple[dict[str, Any] | None, str | None]:
@@ -659,7 +694,7 @@ class NominalSpreadScanner:
                         grvt_info=grvt_info,
                     )
 
-            gathered = await asyncio.gather(*(fetch_one(base) for base in shared_bases), return_exceptions=False)
+            gathered = await asyncio.gather(*(fetch_one(base) for base in target_bases), return_exceptions=False)
             rows: list[dict[str, Any]] = []
             for row, reason in gathered:
                 if row is not None:
@@ -667,7 +702,7 @@ class NominalSpreadScanner:
                 elif reason:
                     skipped_reasons[reason] = skipped_reasons.get(reason, 0) + 1
 
-            return rows, len(configured_bases), len(shared_bases), skipped_reasons, warmup_symbols
+            return rows, len(configured_bases), len(target_bases), skipped_reasons, warmup_symbols
         finally:
             await paradex_client.close()
             session = getattr(grvt_client, "_session", None)
@@ -797,6 +832,11 @@ class NominalSpreadScanner:
             return None, "paradex_leverage_missing"
         if grvt_max_leverage is None:
             return None, "grvt_leverage_missing"
+        effective_leverage = self._resolve_effective_leverage(paradex_max_leverage, grvt_max_leverage)
+        if effective_leverage is None:
+            return None, "invalid_leverage"
+        if effective_leverage < self._min_effective_leverage:
+            return None, SKIP_REASON_EFFECTIVE_LEVERAGE_BELOW_TARGET
 
         paradex_depth_task = paradex_client.fetch_order_book(paradex_market, limit=5)
         grvt_depth_task = grvt_client.fetch_order_book(grvt_market, limit=10)
@@ -872,8 +912,6 @@ class NominalSpreadScanner:
             symbol=symbol,
             edge_pct=tradable_edge_pct,
         )
-
-        effective_leverage = min(_sanitize_leverage(paradex_max_leverage), _sanitize_leverage(grvt_max_leverage))
 
         gross_nominal_spread = tradable_edge_price * Decimal(str(effective_leverage))
 
