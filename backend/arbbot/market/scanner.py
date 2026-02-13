@@ -8,17 +8,25 @@ from decimal import Decimal, InvalidOperation
 from typing import Any
 
 import ccxt.async_support as ccxt  # type: ignore
-from pysdk.grvt_ccxt_env import GrvtEnv
+from pysdk.grvt_ccxt_env import GrvtEnv as GrvtCcxtEnv
 from pysdk.grvt_ccxt_pro import GrvtCcxtPro
+from pysdk.grvt_raw_async import GrvtRawAsync
+from pysdk.grvt_raw_base import GrvtApiConfig, GrvtError
+from pysdk.grvt_raw_env import GrvtEnv as GrvtRawEnv
+from pysdk.grvt_raw_types import ApiGetAllInitialLeverageRequest
 
 from ..config import AppConfig
 from ..models import utc_iso
 
-
 DEFAULT_SCAN_INTERVAL_SEC = 300
 DEFAULT_TOP_LIMIT = 10
-DEFAULT_FALLBACK_LEVERAGE = 2.0
 MAX_TOP_LIMIT = 100
+
+# 官方兜底费率（当接口字段缺失时使用）：
+# Paradex: https://docs.paradex.trade/risk/fees-and-discounts
+# GRVT: https://help.grvt.io/hc/en-us/articles/10465949828111
+DEFAULT_OFFICIAL_PARADEX_TAKER_FEE = Decimal("0.0002")
+DEFAULT_OFFICIAL_GRVT_TAKER_FEE = Decimal("0.0002")
 
 
 def _to_decimal(raw: Any) -> Decimal | None:
@@ -41,11 +49,8 @@ def _to_decimal(raw: Any) -> Decimal | None:
     return None
 
 
-def _sanitize_leverage(raw: float, fallback: float = DEFAULT_FALLBACK_LEVERAGE) -> float:
-    try:
-        value = float(raw)
-    except (TypeError, ValueError):
-        return fallback
+def _sanitize_leverage(raw: Decimal | float | int) -> float:
+    value = float(raw)
     if value < 1:
         return 1.0
     if value > 200:
@@ -60,7 +65,7 @@ def _extract_paradex_max_leverage(market: dict[str, Any]) -> float | None:
         if isinstance(leverage, dict):
             parsed = _to_decimal(leverage.get("max"))
             if parsed is not None and parsed > 0:
-                return float(parsed)
+                return _sanitize_leverage(parsed)
 
     info = market.get("info")
     if not isinstance(info, dict):
@@ -77,31 +82,21 @@ def _extract_paradex_max_leverage(market: dict[str, Any]) -> float | None:
     leverage = Decimal("1") / imf_base
     if leverage <= 0:
         return None
-    return float(leverage)
+    return _sanitize_leverage(leverage)
 
 
-def _extract_grvt_max_leverage(market: dict[str, Any]) -> float | None:
-    direct_keys = (
-        "max_leverage",
-        "maxLeverage",
-        "leverage_max",
-        "leverageMax",
-    )
-    for key in direct_keys:
-        value = _to_decimal(market.get(key))
-        if value is not None and value > 0:
-            return float(value)
-
-    info = market.get("info")
-    if not isinstance(info, dict):
+def _extract_paradex_taker_fee(market: dict[str, Any]) -> Decimal | None:
+    taker = _to_decimal(market.get("taker"))
+    if taker is None:
         return None
+    return taker
 
-    for key in direct_keys:
-        value = _to_decimal(info.get(key))
-        if value is not None and value > 0:
-            return float(value)
 
-    return None
+def _extract_grvt_taker_fee(market: dict[str, Any]) -> Decimal | None:
+    taker = _to_decimal(market.get("taker"))
+    if taker is None:
+        return None
+    return taker
 
 
 def _extract_paradex_top(levels: Any) -> Decimal | None:
@@ -151,48 +146,39 @@ class NominalSpreadScanner:
         self._config = config
         self._scan_interval_sec = max(60, int(scan_interval_sec))
         self._default_limit = max(1, min(int(default_limit), MAX_TOP_LIMIT))
+
         self._rows: list[dict[str, Any]] = []
         self._updated_at = ""
         self._last_refresh_monotonic = 0.0
         self._last_error = ""
+        self._scanned_symbols = 0
+        self._skipped_reasons: dict[str, int] = {}
         self._lock = asyncio.Lock()
 
     async def get_top_spreads(
         self,
         limit: int = DEFAULT_TOP_LIMIT,
-        paradex_fallback_leverage: float = DEFAULT_FALLBACK_LEVERAGE,
-        grvt_fallback_leverage: float = DEFAULT_FALLBACK_LEVERAGE,
         force_refresh: bool = False,
     ) -> dict[str, Any]:
         resolved_limit = max(1, min(int(limit), MAX_TOP_LIMIT))
-        fallback_paradex = _sanitize_leverage(paradex_fallback_leverage)
-        fallback_grvt = _sanitize_leverage(grvt_fallback_leverage)
-
         await self._ensure_cache(force_refresh=force_refresh)
 
-        computed_rows: list[dict[str, Any]] = []
-        for row in self._rows:
-            computed_rows.append(
-                self._build_view_row(
-                    raw_row=row,
-                    fallback_paradex=fallback_paradex,
-                    fallback_grvt=fallback_grvt,
-                )
-            )
-
-        computed_rows.sort(key=lambda item: item["nominal_spread"], reverse=True)
+        sorted_rows = sorted(self._rows, key=lambda item: item["gross_nominal_spread"], reverse=True)
 
         return {
             "updated_at": self._updated_at,
             "scan_interval_sec": self._scan_interval_sec,
             "limit": resolved_limit,
-            "total_symbols": len(computed_rows),
-            "fallback": {
-                "paradex": fallback_paradex,
-                "grvt": fallback_grvt,
+            "scanned_symbols": self._scanned_symbols,
+            "total_symbols": len(sorted_rows),
+            "skipped_count": sum(self._skipped_reasons.values()),
+            "skipped_reasons": self._skipped_reasons,
+            "fee_profile": {
+                "paradex_leg": "taker",
+                "grvt_leg": "taker",
             },
             "last_error": self._last_error or None,
-            "rows": computed_rows[:resolved_limit],
+            "rows": sorted_rows[:resolved_limit],
         }
 
     async def _ensure_cache(self, force_refresh: bool) -> None:
@@ -200,18 +186,16 @@ class NominalSpreadScanner:
             return
 
         async with self._lock:
-            if (
-                not force_refresh
-                and self._rows
-                and (time.monotonic() - self._last_refresh_monotonic) < self._scan_interval_sec
-            ):
+            if not force_refresh and self._rows and (time.monotonic() - self._last_refresh_monotonic) < self._scan_interval_sec:
                 return
             await self._refresh_once()
 
     async def _refresh_once(self) -> None:
         try:
-            scanned_rows = await self._scan_all_symbols()
+            scanned_rows, scanned_symbols, skipped_reasons = await self._scan_all_symbols()
             self._rows = scanned_rows
+            self._scanned_symbols = scanned_symbols
+            self._skipped_reasons = skipped_reasons
             self._updated_at = utc_iso()
             self._last_refresh_monotonic = time.monotonic()
             self._last_error = ""
@@ -222,20 +206,22 @@ class NominalSpreadScanner:
             if not self._rows:
                 self._rows = []
 
-    async def _scan_all_symbols(self) -> list[dict[str, Any]]:
+    async def _scan_all_symbols(self) -> tuple[list[dict[str, Any]], int, dict[str, int]]:
         paradex_client = ccxt.paradex({"enableRateLimit": True})
-        grvt_client = GrvtCcxtPro(env=self._resolve_grvt_env(), parameters={})
+        grvt_client = GrvtCcxtPro(env=self._resolve_grvt_ccxt_env(), parameters=self._build_grvt_ccxt_params())
 
         try:
             await asyncio.gather(paradex_client.load_markets(), grvt_client.load_markets())
+            grvt_leverage_map = await self._fetch_grvt_leverage_map()
 
             paradex_map = self._collect_paradex_markets(paradex_client.markets)
-            grvt_map = self._collect_grvt_markets(grvt_client.markets)
+            grvt_map = self._collect_grvt_markets(grvt_client.markets, grvt_leverage_map)
 
             shared_bases = sorted(set(paradex_map.keys()) & set(grvt_map.keys()))
+            skipped_reasons: dict[str, int] = {}
             semaphore = asyncio.Semaphore(6)
 
-            async def fetch_one(base_asset: str) -> dict[str, Any] | None:
+            async def fetch_one(base_asset: str) -> tuple[dict[str, Any] | None, str | None]:
                 async with semaphore:
                     para_info = paradex_map[base_asset]
                     grvt_info = grvt_map[base_asset]
@@ -247,8 +233,15 @@ class NominalSpreadScanner:
                         grvt_info=grvt_info,
                     )
 
-            rows = await asyncio.gather(*(fetch_one(base) for base in shared_bases), return_exceptions=False)
-            return [row for row in rows if row is not None]
+            gathered = await asyncio.gather(*(fetch_one(base) for base in shared_bases), return_exceptions=False)
+            rows: list[dict[str, Any]] = []
+            for row, reason in gathered:
+                if row is not None:
+                    rows.append(row)
+                elif reason:
+                    skipped_reasons[reason] = skipped_reasons.get(reason, 0) + 1
+
+            return rows, len(shared_bases), skipped_reasons
         finally:
             await paradex_client.close()
             session = getattr(grvt_client, "_session", None)
@@ -262,9 +255,16 @@ class NominalSpreadScanner:
         base_asset: str,
         paradex_info: dict[str, Any],
         grvt_info: dict[str, Any],
-    ) -> dict[str, Any] | None:
+    ) -> tuple[dict[str, Any] | None, str | None]:
         paradex_market = paradex_info["market"]
         grvt_market = grvt_info["market"]
+        paradex_max_leverage = paradex_info.get("max_leverage")
+        grvt_max_leverage = grvt_info.get("max_leverage")
+
+        if paradex_max_leverage is None:
+            return None, "paradex_leverage_missing"
+        if grvt_max_leverage is None:
+            return None, "grvt_leverage_missing"
 
         paradex_depth_task = paradex_client.fetch_order_book(paradex_market, limit=5)
         grvt_depth_task = grvt_client.fetch_order_book(grvt_market, limit=10)
@@ -275,8 +275,10 @@ class NominalSpreadScanner:
             return_exceptions=True,
         )
 
-        if isinstance(paradex_depth, Exception) or isinstance(grvt_depth, Exception):
-            return None
+        if isinstance(paradex_depth, Exception):
+            return None, "paradex_orderbook_error"
+        if isinstance(grvt_depth, Exception):
+            return None, "grvt_orderbook_error"
 
         paradex_bid = _extract_paradex_top(paradex_depth.get("bids"))
         paradex_ask = _extract_paradex_top(paradex_depth.get("asks"))
@@ -295,36 +297,75 @@ class NominalSpreadScanner:
             or paradex_bid >= paradex_ask
             or grvt_bid >= grvt_ask
         ):
-            return None
+            return None, "invalid_bbo"
 
         paradex_mid = (paradex_bid + paradex_ask) / Decimal("2")
         grvt_mid = (grvt_bid + grvt_ask) / Decimal("2")
+        reference_mid = (paradex_mid + grvt_mid) / Decimal("2")
 
-        spread_price = grvt_mid - paradex_mid
-        avg_mid = (paradex_mid + grvt_mid) / Decimal("2")
-        spread_bps = Decimal("0") if avg_mid <= 0 else (spread_price / avg_mid) * Decimal("10000")
+        edge_sell_paradex_buy_grvt = paradex_bid - grvt_ask
+        edge_sell_grvt_buy_paradex = grvt_bid - paradex_ask
+        tradable_edge_price = max(edge_sell_paradex_buy_grvt, edge_sell_grvt_buy_paradex)
 
-        return {
-            "symbol": f"{base_asset}-PERP",
-            "base_asset": base_asset,
-            "paradex_market": paradex_market,
-            "grvt_market": grvt_market,
-            "paradex_bid": float(paradex_bid),
-            "paradex_ask": float(paradex_ask),
-            "paradex_mid": float(paradex_mid),
-            "grvt_bid": float(grvt_bid),
-            "grvt_ask": float(grvt_ask),
-            "grvt_mid": float(grvt_mid),
-            "spread_price": float(spread_price),
-            "spread_abs": float(abs(spread_price)),
-            "spread_bps": float(spread_bps),
-            "paradex_max_leverage": paradex_info.get("max_leverage"),
-            "grvt_max_leverage": grvt_info.get("max_leverage"),
-            "paradex_leverage_source": "market" if paradex_info.get("max_leverage") else "fallback",
-            "grvt_leverage_source": "market" if grvt_info.get("max_leverage") else "fallback",
-            "direction": "grvt_gt_paradex" if spread_price >= 0 else "paradex_gt_grvt",
-            "updated_at": utc_iso(),
-        }
+        if tradable_edge_price <= 0:
+            return None, "edge_not_positive"
+
+        direction = (
+            "sell_paradex_taker_buy_grvt_taker"
+            if tradable_edge_price == edge_sell_paradex_buy_grvt
+            else "buy_paradex_taker_sell_grvt_taker"
+        )
+
+        tradable_edge_bps = Decimal("0")
+        if reference_mid > 0:
+            tradable_edge_bps = (tradable_edge_price / reference_mid) * Decimal("10000")
+
+        effective_leverage = min(_sanitize_leverage(paradex_max_leverage), _sanitize_leverage(grvt_max_leverage))
+
+        gross_nominal_spread = tradable_edge_price * Decimal(str(effective_leverage))
+
+        paradex_fee_rate, paradex_fee_source = self._resolve_paradex_taker_fee(paradex_info)
+        grvt_fee_rate, grvt_fee_source = self._resolve_grvt_taker_fee(grvt_info)
+        total_fee_rate = paradex_fee_rate + grvt_fee_rate
+
+        # 与名义价差同口径：使用参考中间价 * 有效杠杆作为名义 notional。
+        fee_cost_estimate = reference_mid * Decimal(str(effective_leverage)) * total_fee_rate
+        net_nominal_spread = gross_nominal_spread - fee_cost_estimate
+        if net_nominal_spread <= 0:
+            return None, "net_spread_not_positive"
+
+        return (
+            {
+                "symbol": f"{base_asset}-PERP",
+                "base_asset": base_asset,
+                "paradex_market": paradex_market,
+                "grvt_market": grvt_market,
+                "paradex_bid": float(paradex_bid),
+                "paradex_ask": float(paradex_ask),
+                "paradex_mid": float(paradex_mid),
+                "grvt_bid": float(grvt_bid),
+                "grvt_ask": float(grvt_ask),
+                "grvt_mid": float(grvt_mid),
+                "reference_mid": float(reference_mid),
+                "tradable_edge_price": float(tradable_edge_price),
+                "tradable_edge_bps": float(tradable_edge_bps),
+                "direction": direction,
+                "paradex_max_leverage": float(paradex_max_leverage),
+                "grvt_max_leverage": float(grvt_max_leverage),
+                "effective_leverage": float(effective_leverage),
+                "gross_nominal_spread": float(gross_nominal_spread),
+                "fee_cost_estimate": float(fee_cost_estimate),
+                "net_nominal_spread": float(net_nominal_spread),
+                "paradex_fee_rate": float(paradex_fee_rate),
+                "grvt_fee_rate": float(grvt_fee_rate),
+                "fee_source": {
+                    "paradex": paradex_fee_source,
+                    "grvt": grvt_fee_source,
+                },
+                "updated_at": utc_iso(),
+            },
+            None,
+        )
 
     def _collect_paradex_markets(self, markets: dict[str, Any]) -> dict[str, dict[str, Any]]:
         result: dict[str, dict[str, Any]] = {}
@@ -353,11 +394,16 @@ class NominalSpreadScanner:
                 "quote": quote_asset,
                 "priority": priority,
                 "max_leverage": _extract_paradex_max_leverage(item),
+                "taker_fee_rate": _extract_paradex_taker_fee(item),
             }
 
         return result
 
-    def _collect_grvt_markets(self, markets: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    def _collect_grvt_markets(
+        self,
+        markets: dict[str, Any],
+        leverage_map: dict[str, float],
+    ) -> dict[str, dict[str, Any]]:
         result: dict[str, dict[str, Any]] = {}
 
         for item in markets.values():
@@ -389,48 +435,86 @@ class NominalSpreadScanner:
                 "market": market_symbol,
                 "quote": quote_asset,
                 "priority": priority,
-                "max_leverage": _extract_grvt_max_leverage(item),
+                "max_leverage": leverage_map.get(market_symbol),
+                "taker_fee_rate": _extract_grvt_taker_fee(item),
             }
 
         return result
 
-    def _build_view_row(
-        self,
-        raw_row: dict[str, Any],
-        fallback_paradex: float,
-        fallback_grvt: float,
-    ) -> dict[str, Any]:
-        paradex_market_lev = raw_row.get("paradex_max_leverage")
-        grvt_market_lev = raw_row.get("grvt_max_leverage")
+    def _resolve_paradex_taker_fee(self, paradex_info: dict[str, Any]) -> tuple[Decimal, str]:
+        fee = paradex_info.get("taker_fee_rate")
+        if isinstance(fee, Decimal):
+            return fee, "api"
+        return DEFAULT_OFFICIAL_PARADEX_TAKER_FEE, "official"
 
-        paradex_leverage = _sanitize_leverage(
-            paradex_market_lev if paradex_market_lev is not None else fallback_paradex,
-            fallback=fallback_paradex,
-        )
-        grvt_leverage = _sanitize_leverage(
-            grvt_market_lev if grvt_market_lev is not None else fallback_grvt,
-            fallback=fallback_grvt,
-        )
+    def _resolve_grvt_taker_fee(self, grvt_info: dict[str, Any]) -> tuple[Decimal, str]:
+        fee = grvt_info.get("taker_fee_rate")
+        if isinstance(fee, Decimal):
+            return fee, "api"
+        return DEFAULT_OFFICIAL_GRVT_TAKER_FEE, "official"
 
-        effective_leverage = min(paradex_leverage, grvt_leverage)
-        nominal_spread = abs(float(raw_row["spread_price"])) * effective_leverage
-
+    def _build_grvt_ccxt_params(self) -> dict[str, str]:
+        credentials = self._config.grvt.credentials
         return {
-            **raw_row,
-            "paradex_leverage": paradex_leverage,
-            "grvt_leverage": grvt_leverage,
-            "effective_leverage": effective_leverage,
-            "nominal_spread": nominal_spread,
-            "paradex_leverage_source": "market" if paradex_market_lev is not None else "fallback",
-            "grvt_leverage_source": "market" if grvt_market_lev is not None else "fallback",
+            "trading_account_id": credentials.trading_account_id,
+            "private_key": credentials.private_key,
+            "api_key": credentials.api_key,
         }
 
-    def _resolve_grvt_env(self) -> GrvtEnv:
+    async def _fetch_grvt_leverage_map(self) -> dict[str, float]:
+        credentials = self._config.grvt.credentials
+        if not credentials.trading_account_id.strip() or not credentials.private_key.strip() or not credentials.api_key.strip():
+            raise ValueError("GRVT 凭证不足，无法获取真实杠杆（需要 api_key/private_key/trading_account_id）")
+
+        raw_client = GrvtRawAsync(
+            GrvtApiConfig(
+                env=self._resolve_grvt_raw_env(),
+                trading_account_id=credentials.trading_account_id,
+                private_key=credentials.private_key,
+                api_key=credentials.api_key,
+                logger=None,
+            )
+        )
+
+        try:
+            response = await raw_client.get_all_initial_leverage_v1(
+                ApiGetAllInitialLeverageRequest(sub_account_id=credentials.trading_account_id)
+            )
+            if isinstance(response, GrvtError):
+                raise ValueError(f"GRVT 杠杆接口错误: {response.code} {response.message}")
+
+            leverage_map: dict[str, float] = {}
+            for item in response.results:
+                parsed = _to_decimal(item.max_leverage)
+                if parsed is None or parsed <= 0:
+                    continue
+                leverage_map[item.instrument] = _sanitize_leverage(parsed)
+
+            if not leverage_map:
+                raise ValueError("GRVT 杠杆接口返回为空")
+
+            return leverage_map
+        finally:
+            session = getattr(raw_client, "_session", None)
+            if session is not None and not session.closed:
+                await session.close()
+
+    def _resolve_grvt_ccxt_env(self) -> GrvtCcxtEnv:
         env = self._config.grvt.environment.lower().strip()
         if env == "testnet":
-            return GrvtEnv.TESTNET
+            return GrvtCcxtEnv.TESTNET
         if env == "staging":
-            return GrvtEnv.STAGING
+            return GrvtCcxtEnv.STAGING
         if env == "dev":
-            return GrvtEnv.DEV
-        return GrvtEnv.PROD
+            return GrvtCcxtEnv.DEV
+        return GrvtCcxtEnv.PROD
+
+    def _resolve_grvt_raw_env(self) -> GrvtRawEnv:
+        env = self._config.grvt.environment.lower().strip()
+        if env == "testnet":
+            return GrvtRawEnv.TESTNET
+        if env == "staging":
+            return GrvtRawEnv.STAGING
+        if env == "dev":
+            return GrvtRawEnv.DEV
+        return GrvtRawEnv.PROD

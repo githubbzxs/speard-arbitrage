@@ -42,6 +42,7 @@ export interface CredentialsPayload {
 
 export interface CredentialFieldStatus {
   configured: boolean;
+  masked: string;
 }
 
 export interface CredentialsStatus {
@@ -49,30 +50,47 @@ export interface CredentialsStatus {
   grvt: Record<GrvtCredentialField, CredentialFieldStatus>;
 }
 
+export interface ExchangeValidationResult {
+  valid: boolean;
+  reason: string;
+  checks: Record<string, boolean>;
+}
+
+export interface CredentialsValidationResponse {
+  ok: boolean;
+  message: string;
+  data: {
+    paradex: ExchangeValidationResult;
+    grvt: ExchangeValidationResult;
+  } | null;
+}
+
+export type CredentialsValidationSource = "saved" | "draft";
+
 export const DEFAULT_CREDENTIALS_STATUS: CredentialsStatus = {
   paradex: {
-    api_key: { configured: false },
-    api_secret: { configured: false },
-    passphrase: { configured: false }
+    api_key: { configured: false, masked: "" },
+    api_secret: { configured: false, masked: "" },
+    passphrase: { configured: false, masked: "" }
   },
   grvt: {
-    private_key: { configured: false },
-    trading_account_id: { configured: false },
-    api_key: { configured: false }
+    private_key: { configured: false, masked: "" },
+    trading_account_id: { configured: false, masked: "" },
+    api_key: { configured: false, masked: "" }
   }
 };
 
 function cloneDefaultCredentialsStatus(): CredentialsStatus {
   return {
     paradex: {
-      api_key: { configured: false },
-      api_secret: { configured: false },
-      passphrase: { configured: false }
+      api_key: { configured: false, masked: "" },
+      api_secret: { configured: false, masked: "" },
+      passphrase: { configured: false, masked: "" }
     },
     grvt: {
-      private_key: { configured: false },
-      trading_account_id: { configured: false },
-      api_key: { configured: false }
+      private_key: { configured: false, masked: "" },
+      trading_account_id: { configured: false, masked: "" },
+      api_key: { configured: false, masked: "" }
     }
   };
 }
@@ -446,13 +464,13 @@ function normalizeExchangeStatus<T extends string>(
 ): Record<T, CredentialFieldStatus> {
   const result = {} as Record<T, CredentialFieldStatus>;
   for (const field of fields) {
-    result[field] = { configured: false };
+    result[field] = { configured: false, masked: "" };
   }
 
   if (Array.isArray(source)) {
     const configuredSet = new Set(source.filter((item): item is string => typeof item === "string"));
     for (const field of fields) {
-      result[field] = { configured: configuredSet.has(field) };
+      result[field] = { configured: configuredSet.has(field), masked: "" };
     }
     return result;
   }
@@ -466,11 +484,19 @@ function normalizeExchangeStatus<T extends string>(
 
   for (const field of fields) {
     if (field in record) {
-      result[field] = { configured: normalizeConfiguredFlag(record[field]) };
+      const fieldRecord = toRecord(record[field]);
+      if (fieldRecord) {
+        result[field] = {
+          configured: normalizeConfiguredFlag(fieldRecord.configured ?? fieldRecord),
+          masked: pickString(fieldRecord, ["masked", "mask"], "")
+        };
+      } else {
+        result[field] = { configured: normalizeConfiguredFlag(record[field]), masked: "" };
+      }
       continue;
     }
 
-    result[field] = { configured: configuredSet.has(field) };
+    result[field] = { configured: configuredSet.has(field), masked: "" };
   }
 
   return result;
@@ -533,16 +559,9 @@ function normalizeMarketSpreadRow(data: unknown): MarketTopSpreadRow | null {
     return null;
   }
 
-  const paradexLeverageSourceRaw = pickString(
-    record,
-    ["paradex_leverage_source", "paradexLeverageSource"],
-    "fallback"
-  );
-  const grvtLeverageSourceRaw = pickString(
-    record,
-    ["grvt_leverage_source", "grvtLeverageSource"],
-    "fallback"
-  );
+  const feeSourceRecord = toRecord(record.fee_source) ?? toRecord(record.feeSource);
+  const paradexFeeSourceRaw = pickString(feeSourceRecord ?? {}, ["paradex"], "official");
+  const grvtFeeSourceRaw = pickString(feeSourceRecord ?? {}, ["grvt"], "official");
 
   return {
     symbol,
@@ -555,16 +574,22 @@ function normalizeMarketSpreadRow(data: unknown): MarketTopSpreadRow | null {
     grvtBid: pickNumber(record, ["grvt_bid", "grvtBid"], 0),
     grvtAsk: pickNumber(record, ["grvt_ask", "grvtAsk"], 0),
     grvtMid: pickNumber(record, ["grvt_mid", "grvtMid"], 0),
-    spreadPrice: pickNumber(record, ["spread_price", "spreadPrice"], 0),
-    spreadAbs: pickNumber(record, ["spread_abs", "spreadAbs"], 0),
-    spreadBps: pickNumber(record, ["spread_bps", "spreadBps"], 0),
+    referenceMid: pickNumber(record, ["reference_mid", "referenceMid"], 0),
+    tradableEdgePrice: pickNumber(record, ["tradable_edge_price", "tradableEdgePrice"], 0),
+    tradableEdgeBps: pickNumber(record, ["tradable_edge_bps", "tradableEdgeBps"], 0),
     direction: pickString(record, ["direction"], "unknown"),
-    paradexLeverage: pickNumber(record, ["paradex_leverage", "paradexLeverage"], 1),
-    grvtLeverage: pickNumber(record, ["grvt_leverage", "grvtLeverage"], 1),
+    paradexMaxLeverage: pickNumber(record, ["paradex_max_leverage", "paradexMaxLeverage"], 1),
+    grvtMaxLeverage: pickNumber(record, ["grvt_max_leverage", "grvtMaxLeverage"], 1),
     effectiveLeverage: pickNumber(record, ["effective_leverage", "effectiveLeverage"], 1),
-    nominalSpread: pickNumber(record, ["nominal_spread", "nominalSpread"], 0),
-    paradexLeverageSource: paradexLeverageSourceRaw === "market" ? "market" : "fallback",
-    grvtLeverageSource: grvtLeverageSourceRaw === "market" ? "market" : "fallback",
+    grossNominalSpread: pickNumber(record, ["gross_nominal_spread", "grossNominalSpread"], 0),
+    feeCostEstimate: pickNumber(record, ["fee_cost_estimate", "feeCostEstimate"], 0),
+    netNominalSpread: pickNumber(record, ["net_nominal_spread", "netNominalSpread"], 0),
+    paradexFeeRate: pickNumber(record, ["paradex_fee_rate", "paradexFeeRate"], 0),
+    grvtFeeRate: pickNumber(record, ["grvt_fee_rate", "grvtFeeRate"], 0),
+    feeSource: {
+      paradex: paradexFeeSourceRaw === "api" ? "api" : "official",
+      grvt: grvtFeeSourceRaw === "api" ? "api" : "official"
+    },
     updatedAt: pickString(record, ["updated_at", "updatedAt"], "")
   };
 }
@@ -574,10 +599,13 @@ export function normalizeMarketTopSpreads(data: unknown): MarketTopSpreadsRespon
     updatedAt: "",
     scanIntervalSec: 300,
     limit: 10,
+    scannedSymbols: 0,
     totalSymbols: 0,
-    fallback: {
-      paradex: 2,
-      grvt: 2
+    skippedCount: 0,
+    skippedReasons: {},
+    feeProfile: {
+      paradexLeg: "taker",
+      grvtLeg: "taker"
     },
     lastError: null,
     rows: []
@@ -591,19 +619,37 @@ export function normalizeMarketTopSpreads(data: unknown): MarketTopSpreadsRespon
   const rows = extractArray(record.rows)
     .map((item) => normalizeMarketSpreadRow(item))
     .filter((item): item is MarketTopSpreadRow => item !== null)
-    .sort((a, b) => b.nominalSpread - a.nominalSpread);
+    .sort((a, b) => b.grossNominalSpread - a.grossNominalSpread);
 
-  const fallbackRecord = toRecord(record.fallback);
+  const skippedReasonsRecord = toRecord(record.skipped_reasons) ?? toRecord(record.skippedReasons) ?? {};
+  const normalizedSkippedReasons: Record<string, number> = {};
+  for (const [key, value] of Object.entries(skippedReasonsRecord)) {
+    if (typeof value === "number" && Number.isFinite(value) && value > 0) {
+      normalizedSkippedReasons[key] = value;
+    }
+    if (typeof value === "string" && value.trim()) {
+      const parsed = Number(value);
+      if (Number.isFinite(parsed) && parsed > 0) {
+        normalizedSkippedReasons[key] = parsed;
+      }
+    }
+  }
+  const feeProfileRecord = toRecord(record.fee_profile) ?? toRecord(record.feeProfile);
+  const paradexLegRaw = pickString(feeProfileRecord ?? {}, ["paradex_leg", "paradexLeg"], "taker");
+  const grvtLegRaw = pickString(feeProfileRecord ?? {}, ["grvt_leg", "grvtLeg"], "taker");
   const lastErrorRaw = record.last_error ?? record.lastError;
 
   return {
     updatedAt: pickString(record, ["updated_at", "updatedAt"], fallback.updatedAt),
     scanIntervalSec: pickNumber(record, ["scan_interval_sec", "scanIntervalSec"], fallback.scanIntervalSec),
     limit: Math.max(1, pickNumber(record, ["limit"], fallback.limit)),
+    scannedSymbols: Math.max(0, pickNumber(record, ["scanned_symbols", "scannedSymbols"], fallback.scannedSymbols)),
     totalSymbols: Math.max(0, pickNumber(record, ["total_symbols", "totalSymbols"], rows.length)),
-    fallback: {
-      paradex: fallbackRecord ? pickNumber(fallbackRecord, ["paradex"], fallback.fallback.paradex) : fallback.fallback.paradex,
-      grvt: fallbackRecord ? pickNumber(fallbackRecord, ["grvt"], fallback.fallback.grvt) : fallback.fallback.grvt
+    skippedCount: Math.max(0, pickNumber(record, ["skipped_count", "skippedCount"], fallback.skippedCount)),
+    skippedReasons: normalizedSkippedReasons,
+    feeProfile: {
+      paradexLeg: paradexLegRaw === "taker" ? "taker" : "taker",
+      grvtLeg: grvtLegRaw === "maker" ? "maker" : "taker"
     },
     lastError: typeof lastErrorRaw === "string" && lastErrorRaw.trim() ? lastErrorRaw : null,
     rows
@@ -739,6 +785,57 @@ export const apiClient = {
     return normalizeActionResult(response, "凭证已应用");
   },
 
+  async validateCredentials(payload: {
+    source: CredentialsValidationSource;
+    payload?: CredentialsPayload;
+  }): Promise<CredentialsValidationResponse> {
+    const response = await requestJson<unknown>("/api/credentials/validate", {
+      method: "POST",
+      body: JSON.stringify(payload)
+    });
+
+    const record = toRecord(response);
+    const dataRecord = toRecord(record?.data);
+
+    const parseExchange = (value: unknown): ExchangeValidationResult => {
+      const exchangeRecord = toRecord(value);
+      if (!exchangeRecord) {
+        return {
+          valid: false,
+          reason: "未返回校验结果",
+          checks: {}
+        };
+      }
+
+      const checksRecord = toRecord(exchangeRecord.checks);
+      const checks: Record<string, boolean> = {};
+      if (checksRecord) {
+        for (const [key, rawValue] of Object.entries(checksRecord)) {
+          checks[key] = normalizeConfiguredFlag(rawValue);
+        }
+      }
+
+      return {
+        valid: normalizeConfiguredFlag(exchangeRecord.valid),
+        reason: pickString(exchangeRecord, ["reason", "message", "detail"], ""),
+        checks
+      };
+    };
+
+    const paradex = parseExchange(dataRecord?.paradex);
+    const grvt = parseExchange(dataRecord?.grvt);
+    return {
+      ok: normalizeConfiguredFlag(record?.ok),
+      message: pickString(record ?? {}, ["message", "detail"], ""),
+      data: dataRecord
+        ? {
+            paradex,
+            grvt
+          }
+        : null
+    };
+  },
+
   async setOrderExecution(liveOrderEnabled: boolean, confirmText?: string): Promise<ActionResult> {
     const response = await requestJson<unknown>("/api/runtime/order-execution", {
       method: "POST",
@@ -767,19 +864,13 @@ export const apiClient = {
 
   async getMarketTopSpreads(options?: {
     limit?: number;
-    paradexFallbackLeverage?: number;
-    grvtFallbackLeverage?: number;
     forceRefresh?: boolean;
   }): Promise<MarketTopSpreadsResponse> {
     const params = new URLSearchParams();
     const limit = options?.limit ?? 10;
-    const paradexFallbackLeverage = options?.paradexFallbackLeverage ?? 2;
-    const grvtFallbackLeverage = options?.grvtFallbackLeverage ?? 2;
     const forceRefresh = options?.forceRefresh ?? false;
 
     params.set("limit", String(limit));
-    params.set("paradex_fallback_leverage", String(paradexFallbackLeverage));
-    params.set("grvt_fallback_leverage", String(grvtFallbackLeverage));
     if (forceRefresh) {
       params.set("force_refresh", "true");
     }

@@ -1,41 +1,48 @@
-﻿import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { apiClient, getErrorMessage } from "../api/client";
 import type { MarketTopSpreadsResponse } from "../types";
 import { formatNumber, formatPrice, formatSigned, formatTimestamp } from "../utils/format";
 
 const REFRESH_INTERVAL_MS = 20000;
-const DEFAULT_LIMIT = 10;
+const TOP_LIMIT = 10;
 
 const EMPTY_RESULT: MarketTopSpreadsResponse = {
   updatedAt: "",
   scanIntervalSec: 300,
-  limit: DEFAULT_LIMIT,
+  limit: TOP_LIMIT,
+  scannedSymbols: 0,
   totalSymbols: 0,
-  fallback: {
-    paradex: 2,
-    grvt: 2
+  skippedCount: 0,
+  skippedReasons: {},
+  feeProfile: {
+    paradexLeg: "taker",
+    grvtLeg: "taker"
   },
   lastError: null,
   rows: []
 };
 
-function parseLeverage(value: string, defaultValue: number): number {
-  const parsed = Number(value.trim());
-  if (!Number.isFinite(parsed) || parsed <= 0) {
-    return defaultValue;
+function formatSkippedReasons(skippedReasons: Record<string, number>): string {
+  const entries = Object.entries(skippedReasons);
+  if (entries.length === 0) {
+    return "无";
   }
-  if (parsed > 200) {
-    return 200;
-  }
-  if (parsed < 1) {
-    return 1;
-  }
-  return parsed;
+
+  return entries
+    .sort((a, b) => b[1] - a[1])
+    .map(([reason, count]) => `${reason}(${count})`)
+    .join("，");
 }
 
-function leverageSourceLabel(source: "market" | "fallback"): string {
-  return source === "market" ? "交易所" : "回退";
+function directionLabel(direction: string): string {
+  if (direction === "sell_paradex_taker_buy_grvt_taker" || direction === "sell_paradex_taker_buy_grvt_maker") {
+    return "卖 Paradex / 买 GRVT";
+  }
+  if (direction === "buy_paradex_taker_sell_grvt_taker" || direction === "buy_paradex_taker_sell_grvt_maker") {
+    return "买 Paradex / 卖 GRVT";
+  }
+  return direction || "--";
 }
 
 export default function MarketPage() {
@@ -44,54 +51,35 @@ export default function MarketPage() {
   const [refreshing, setRefreshing] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
 
-  const [appliedParadexFallback, setAppliedParadexFallback] = useState(2);
-  const [appliedGrvtFallback, setAppliedGrvtFallback] = useState(2);
-  const [draftParadexFallback, setDraftParadexFallback] = useState("2");
-  const [draftGrvtFallback, setDraftGrvtFallback] = useState("2");
+  const loadSpreads = useCallback(async (options?: { forceRefresh?: boolean; silent?: boolean }) => {
+    const forceRefresh = options?.forceRefresh ?? false;
+    const silent = options?.silent ?? false;
 
-  const loadSpreads = useCallback(
-    async (
-      options?: {
-        forceRefresh?: boolean;
-        paradexFallback?: number;
-        grvtFallback?: number;
-        silent?: boolean;
-      }
-    ) => {
-      const forceRefresh = options?.forceRefresh ?? false;
-      const silent = options?.silent ?? false;
-      const paradexFallback = options?.paradexFallback ?? appliedParadexFallback;
-      const grvtFallback = options?.grvtFallback ?? appliedGrvtFallback;
+    if (!silent) {
+      setLoading(true);
+    }
+    if (forceRefresh) {
+      setRefreshing(true);
+    }
 
+    try {
+      const response = await apiClient.getMarketTopSpreads({
+        limit: TOP_LIMIT,
+        forceRefresh
+      });
+      setResult(response);
+      setErrorMessage("");
+    } catch (error) {
+      setErrorMessage(`加载行情排行失败：${getErrorMessage(error)}`);
+    } finally {
       if (!silent) {
-        setLoading(true);
+        setLoading(false);
       }
       if (forceRefresh) {
-        setRefreshing(true);
+        setRefreshing(false);
       }
-
-      try {
-        const response = await apiClient.getMarketTopSpreads({
-          limit: DEFAULT_LIMIT,
-          paradexFallbackLeverage: paradexFallback,
-          grvtFallbackLeverage: grvtFallback,
-          forceRefresh
-        });
-        setResult(response);
-        setErrorMessage("");
-      } catch (error) {
-        setErrorMessage(`加载行情排行失败：${getErrorMessage(error)}`);
-      } finally {
-        if (!silent) {
-          setLoading(false);
-        }
-        if (forceRefresh) {
-          setRefreshing(false);
-        }
-      }
-    },
-    [appliedParadexFallback, appliedGrvtFallback]
-  );
+    }
+  }, []);
 
   useEffect(() => {
     void loadSpreads();
@@ -104,34 +92,21 @@ export default function MarketPage() {
     return () => window.clearInterval(timer);
   }, [loadSpreads]);
 
-  const onApplyFallbackClick = () => {
-    const nextParadex = parseLeverage(draftParadexFallback, appliedParadexFallback);
-    const nextGrvt = parseLeverage(draftGrvtFallback, appliedGrvtFallback);
-
-    setAppliedParadexFallback(nextParadex);
-    setAppliedGrvtFallback(nextGrvt);
-    setDraftParadexFallback(String(nextParadex));
-    setDraftGrvtFallback(String(nextGrvt));
-
-    void loadSpreads({
-      forceRefresh: true,
-      paradexFallback: nextParadex,
-      grvtFallback: nextGrvt
-    });
-  };
-
   const onForceRefreshClick = () => {
     void loadSpreads({ forceRefresh: true });
   };
 
-  const topRows = result.rows;
+  const topRows = result.rows.slice(0, TOP_LIMIT);
 
   const summaryText = useMemo(() => {
-    if (topRows.length === 0) {
-      return "暂无可用币对";
+    if (loading) {
+      return "加载中...";
     }
-    return `展示全币对扫描后的 Top${topRows.length} 名义价差`;
-  }, [topRows.length]);
+    if (topRows.length === 0) {
+      return "当前无可执行价差";
+    }
+    return `全市场扫描 ${result.scannedSymbols} 个可比币对，展示名义价差 Top${topRows.length}`;
+  }, [loading, result.scannedSymbols, topRows.length]);
 
   return (
     <div className="page-grid">
@@ -141,101 +116,93 @@ export default function MarketPage() {
       <section className="panel page-panel">
         <div className="panel-title">
           <h2>行情页</h2>
-          <small>{loading ? "加载中..." : summaryText}</small>
+          <small>{summaryText}</small>
         </div>
 
-        <div className="market-controls">
-          <div className="inline-fields">
-            <label htmlFor="paradex-fallback">Paradex 回退杠杆</label>
-            <input
-              id="paradex-fallback"
-              value={draftParadexFallback}
-              onChange={(event) => setDraftParadexFallback(event.target.value)}
-              placeholder="例如 2"
-            />
-          </div>
-
-          <div className="inline-fields">
-            <label htmlFor="grvt-fallback">GRVT 回退杠杆</label>
-            <input
-              id="grvt-fallback"
-              value={draftGrvtFallback}
-              onChange={(event) => setDraftGrvtFallback(event.target.value)}
-              placeholder="例如 2"
-            />
-          </div>
-
-          <button className="btn btn-secondary" type="button" onClick={onApplyFallbackClick} disabled={refreshing}>
-            应用并刷新
-          </button>
+        <div className="market-controls market-controls-compact">
           <button className="btn btn-ghost" type="button" onClick={onForceRefreshClick} disabled={refreshing}>
-            强制刷新
+            {refreshing ? "刷新中..." : "强制刷新"}
           </button>
         </div>
 
         <p className="hint">
-          当前计算：名义价差 = |实际价差| × min(Paradex 杠杆, GRVT 杠杆)。
-          当前回退杠杆：Paradex {formatNumber(result.fallback.paradex, 2)} / GRVT {formatNumber(result.fallback.grvt, 2)}。
+          计算口径：实际价差 = max(Paradex 买一 - GRVT 卖一, GRVT 买一 - Paradex 卖一)；
+          名义价差 = 实际价差 × min(Paradex 最大杠杆, GRVT 最大杠杆)。
         </p>
         <p className="hint">
-          扫描周期约 {result.scanIntervalSec} 秒，最近刷新 {formatTimestamp(result.updatedAt)}，共覆盖 {result.totalSymbols} 个币对。
+          最近刷新 {formatTimestamp(result.updatedAt)}，扫描周期约 {result.scanIntervalSec} 秒，
+          共覆盖 {result.totalSymbols} 个可用机会，跳过 {result.skippedCount} 个（{formatSkippedReasons(result.skippedReasons)}）。
         </p>
       </section>
 
       <section className="panel page-panel">
         <div className="panel-title">
           <h2>名义价差 Top10</h2>
-          <small>真实买卖一价格（Paradex + GRVT）</small>
+          <small>两所真实买卖价（实时）</small>
         </div>
 
         <div className="table-wrap">
-          <table>
+          <table className="responsive-table">
             <thead>
               <tr>
                 <th>#</th>
                 <th>币对</th>
                 <th>Paradex 买/卖</th>
                 <th>GRVT 买/卖</th>
+                <th>方向</th>
                 <th>实际价差</th>
                 <th>有效杠杆</th>
                 <th>名义价差</th>
+                <th>预估费用</th>
+                <th>净名义价差</th>
               </tr>
             </thead>
             <tbody>
               {topRows.length === 0 ? (
                 <tr>
-                  <td colSpan={7} className="empty-cell">
+                  <td colSpan={10} className="empty-cell">
                     暂无行情数据
                   </td>
                 </tr>
               ) : (
                 topRows.map((row, index) => (
                   <tr key={row.symbol}>
-                    <td>{index + 1}</td>
-                    <td>
+                    <td data-label="排名">{index + 1}</td>
+                    <td data-label="币对">
                       <div>{row.symbol}</div>
-                      <small className="muted-inline">{row.paradexMarket} / {row.grvtMarket}</small>
-                    </td>
-                    <td>
-                      <div>{formatPrice(row.paradexBid)} / {formatPrice(row.paradexAsk)}</div>
-                      <small className="muted-inline">中间价 {formatPrice(row.paradexMid)}</small>
-                    </td>
-                    <td>
-                      <div>{formatPrice(row.grvtBid)} / {formatPrice(row.grvtAsk)}</div>
-                      <small className="muted-inline">中间价 {formatPrice(row.grvtMid)}</small>
-                    </td>
-                    <td>
-                      <div>{formatSigned(row.spreadPrice, 4)}</div>
-                      <small className="muted-inline">{formatSigned(row.spreadBps, 2)} bps</small>
-                    </td>
-                    <td>
-                      <div>{formatNumber(row.effectiveLeverage, 2)}x</div>
                       <small className="muted-inline">
-                        P {formatNumber(row.paradexLeverage, 2)}x({leverageSourceLabel(row.paradexLeverageSource)}) / G {formatNumber(row.grvtLeverage, 2)}x({leverageSourceLabel(row.grvtLeverageSource)})
+                        {row.paradexMarket} / {row.grvtMarket}
                       </small>
                     </td>
-                    <td>
-                      <strong>{formatSigned(row.nominalSpread, 4)}</strong>
+                    <td data-label="Paradex 买/卖">
+                      <div>
+                        {formatPrice(row.paradexBid)} / {formatPrice(row.paradexAsk)}
+                      </div>
+                      <small className="muted-inline">中间价 {formatPrice(row.paradexMid)}</small>
+                    </td>
+                    <td data-label="GRVT 买/卖">
+                      <div>
+                        {formatPrice(row.grvtBid)} / {formatPrice(row.grvtAsk)}
+                      </div>
+                      <small className="muted-inline">中间价 {formatPrice(row.grvtMid)}</small>
+                    </td>
+                    <td data-label="方向">{directionLabel(row.direction)}</td>
+                    <td data-label="实际价差">
+                      <div>{formatSigned(row.tradableEdgePrice, 6)}</div>
+                      <small className="muted-inline">{formatSigned(row.tradableEdgeBps, 2)} bps</small>
+                    </td>
+                    <td data-label="有效杠杆">
+                      <div>{formatNumber(row.effectiveLeverage, 2)}x</div>
+                      <small className="muted-inline">
+                        P {formatNumber(row.paradexMaxLeverage, 2)}x / G {formatNumber(row.grvtMaxLeverage, 2)}x
+                      </small>
+                    </td>
+                    <td data-label="名义价差">
+                      <strong>{formatSigned(row.grossNominalSpread, 4)}</strong>
+                    </td>
+                    <td data-label="预估费用">{formatSigned(row.feeCostEstimate, 4)}</td>
+                    <td data-label="净名义价差">
+                      <strong>{formatSigned(row.netNominalSpread, 4)}</strong>
                     </td>
                   </tr>
                 ))

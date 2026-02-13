@@ -82,6 +82,26 @@
   - Impact：`web/ui/src/App.tsx`、`web/ui/src/main.tsx`、`web/ui/src/pages/MarketPage.tsx`、`web/ui/src/pages/TradePage.tsx`、`web/ui/src/pages/ApiConfigPage.tsx`、`web/ui/src/api/client.ts`、`web/ui/src/types.ts`、`web/ui/src/styles.css`、`web/ui/package.json`。
   - Verify：`cd web/ui && npm run build`，并检查 `/market` `/trade` `/api-config` 三个路由页面。
 
+- [2026-02-13] GRVT 杠杆改为私有接口强制获取并移除回退杠杆
+  - Why：用户要求不再使用回退杠杆，避免杠杆信息不准导致名义价差失真。
+  - Impact：`backend/arbbot/market/scanner.py`、`backend/arbbot/web/api.py`、`backend/tests/test_api_market_top_spreads.py`、`web/ui/src/api/client.ts`、`web/ui/src/pages/MarketPage.tsx`。
+  - Verify：`python -m pytest backend/tests`，访问 `GET /api/market/top-spreads` 不再接受 `*_fallback_leverage` 参数。
+
+- [2026-02-13] 名义价差改为可执行价差口径并按 Top10 展示
+  - Why：避免“价差乱跳/不科学”的观感，使用可执行买卖一价差（bid/ask）与最小最大杠杆计算名义价差。
+  - Impact：`backend/arbbot/market/scanner.py`、`web/ui/src/pages/MarketPage.tsx`、`web/ui/src/types.ts`、`web/ui/src/api/client.ts`。
+  - Verify：`cd web/ui && npm run build`，页面显示两所真实买卖价、实际价差、名义价差、净名义价差。
+
+- [2026-02-13] API 配置页新增凭证掩码展示与凭证有效性检测
+  - Why：解决“明明配置了但看起来空白”的问题，并允许用户直接在页面检测 key 是否有效。
+  - Impact：`backend/arbbot/storage/credentials_repository.py`、`backend/arbbot/security/credentials_validator.py`、`backend/arbbot/web/api.py`、`backend/tests/test_api_credentials.py`、`web/ui/src/pages/ApiConfigPage.tsx`、`web/ui/src/api/client.ts`、`web/ui/src/styles.css`。
+  - Verify：`python -m pytest backend/tests`、`cd web/ui && npm run build`，页面可看到 `****xxxx` 掩码并可执行“检测已保存凭证/检测当前填写凭证”。
+
+- [2026-02-13] 前端补充移动端适配（底部导航与响应式表格）
+  - Why：满足手机端可用性要求，避免桌面布局在小屏下难以操作。
+  - Impact：`web/ui/src/styles.css`、`web/ui/src/pages/MarketPage.tsx`。
+  - Verify：浏览器移动端模式下可通过底部导航切页，行情表格可读。
+
 ## Commands
 - 后端测试：`python -m pytest backend/tests`
 - 后端启动：`python backend/main.py`
@@ -97,6 +117,7 @@
   - 已新增运行时双开关接口：`POST /api/runtime/order-execution`、`POST /api/runtime/market-data-mode`。
   - 已新增 `GET /api/market/top-spreads`，默认按全市场名义价差返回 Top10。
   - 前端已拆分为 `行情页面 / 下单页面 / API配置页面` 三路由，并保留深色主题切换。
+  - API 配置页已支持凭证掩码状态与在线校验；行情页已移除回退杠杆输入并显示可执行价差口径。
 - 下一步建议：
   - 为凭证接口增加鉴权（当前默认无鉴权）。
   - 将 FastAPI `on_event` 迁移到 lifespan，消除弃用警告。
@@ -106,7 +127,7 @@
   - 原因：应用仍使用 `@app.on_event("startup"/"shutdown")`。
   - 修复：后续迁移至 lifespan handlers。
   - 验证：迁移后运行 `python -m pytest backend/tests`，警告应减少。
-- 现象：GRVT 公共市场信息未直接提供 `max_leverage`。
-  - 原因：GRVT 公共市场接口字段不含杠杆上限，账号杠杆查询接口属于私有接口。
-  - 修复：名义价差计算中优先使用交易所字段，缺失时使用前端可调回退杠杆。
-  - 验证：访问 `/api/market/top-spreads`，检查 `*_leverage_source` 字段为 `market/fallback`。
+- 现象：`/api/market/top-spreads` 依赖 GRVT 私有凭证。
+  - 原因：GRVT 最大杠杆仅可通过私有接口获取，已移除回退杠杆。
+  - 修复：在 API 配置页填写并应用 `grvt.api_key/private_key/trading_account_id`，再启动扫描。
+  - 验证：`GET /api/market/top-spreads` 返回 `rows` 且 `last_error` 为空。

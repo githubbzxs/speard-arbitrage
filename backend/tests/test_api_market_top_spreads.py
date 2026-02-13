@@ -54,26 +54,26 @@ def test_market_top_spreads_endpoint_returns_scanner_payload(tmp_path: Path) -> 
 
     async def fake_get_top_spreads(
         limit: int,
-        paradex_fallback_leverage: float,
-        grvt_fallback_leverage: float,
         force_refresh: bool,
     ) -> dict[str, object]:
         assert limit == 7
-        assert paradex_fallback_leverage == 3.0
-        assert grvt_fallback_leverage == 4.0
         assert force_refresh is True
         return {
             "updated_at": "2026-02-13T00:00:00+00:00",
             "scan_interval_sec": 300,
             "limit": 7,
             "total_symbols": 1,
-            "fallback": {"paradex": 3.0, "grvt": 4.0},
+            "scanned_symbols": 3,
+            "skipped_count": 2,
+            "skipped_reasons": {"net_spread_not_positive": 2},
+            "fee_profile": {"paradex_leg": "taker", "grvt_leg": "maker"},
             "last_error": None,
             "rows": [
                 {
                     "symbol": "BTC-PERP",
-                    "nominal_spread": 12.34,
-                    "spread_price": 6.17,
+                    "gross_nominal_spread": 12.34,
+                    "net_nominal_spread": 9.87,
+                    "tradable_edge_price": 6.17,
                 }
             ],
         }
@@ -81,12 +81,10 @@ def test_market_top_spreads_endpoint_returns_scanner_payload(tmp_path: Path) -> 
     app.state.market_scanner.get_top_spreads = fake_get_top_spreads
 
     with TestClient(app) as client:
-        response = client.get(
-            "/api/market/top-spreads?limit=7&paradex_fallback_leverage=3&grvt_fallback_leverage=4&force_refresh=true"
-        )
+        response = client.get("/api/market/top-spreads?limit=7&force_refresh=true")
 
     assert response.status_code == 200
     payload = response.json()
     assert payload["limit"] == 7
     assert payload["rows"][0]["symbol"] == "BTC-PERP"
-    assert payload["rows"][0]["nominal_spread"] == 12.34
+    assert payload["rows"][0]["gross_nominal_spread"] == 12.34

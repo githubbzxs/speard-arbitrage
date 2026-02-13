@@ -82,16 +82,22 @@ export interface MarketTopSpreadRow {
   grvtBid: number;
   grvtAsk: number;
   grvtMid: number;
-  spreadPrice: number;
-  spreadAbs: number;
-  spreadBps: number;
+  referenceMid: number;
+  tradableEdgePrice: number;
+  tradableEdgeBps: number;
   direction: string;
-  paradexLeverage: number;
-  grvtLeverage: number;
+  paradexMaxLeverage: number;
+  grvtMaxLeverage: number;
   effectiveLeverage: number;
-  nominalSpread: number;
-  paradexLeverageSource: "market" | "fallback";
-  grvtLeverageSource: "market" | "fallback";
+  grossNominalSpread: number;
+  feeCostEstimate: number;
+  netNominalSpread: number;
+  paradexFeeRate: number;
+  grvtFeeRate: number;
+  feeSource: {
+    paradex: "api" | "official";
+    grvt: "api" | "official";
+  };
   updatedAt: string;
 }
 
@@ -99,10 +105,13 @@ export interface MarketTopSpreadsResponse {
   updatedAt: string;
   scanIntervalSec: number;
   limit: number;
+  scannedSymbols: number;
   totalSymbols: number;
-  fallback: {
-    paradex: number;
-    grvt: number;
+  skippedCount: number;
+  skippedReasons: Record<string, number>;
+  feeProfile: {
+    paradexLeg: "taker";
+    grvtLeg: "maker" | "taker";
   };
   lastError: string | null;
   rows: MarketTopSpreadRow[];

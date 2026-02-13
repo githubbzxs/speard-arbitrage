@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
@@ -11,6 +11,7 @@ from pydantic import BaseModel, Field
 
 from ..config import AppConfig
 from ..market import NominalSpreadScanner
+from ..security import CredentialsValidator
 from ..storage import CredentialsRepository
 from ..strategy.orchestrator import ArbitrageOrchestrator
 
@@ -43,6 +44,11 @@ class CredentialsPayload(BaseModel):
     grvt: GrvtCredentialsPayload | None = None
 
 
+class ValidateCredentialsRequest(BaseModel):
+    source: Literal["saved", "draft"] = Field(default="saved", description="saved 或 draft")
+    payload: CredentialsPayload | None = None
+
+
 class RuntimeOrderExecutionRequest(BaseModel):
     live_order_enabled: bool = Field(description="是否启用真实下单")
     confirm_text: str | None = Field(default=None, description="开启真实下单时的确认口令")
@@ -56,11 +62,13 @@ def create_app(config: AppConfig) -> FastAPI:
     """创建 API 应用。"""
     orchestrator = ArbitrageOrchestrator(config)
     credentials_repository = CredentialsRepository(config.storage.sqlite_path)
+    credentials_validator = CredentialsValidator(config)
     market_scanner = NominalSpreadScanner(config=config)
 
     app = FastAPI(title="跨所价差套利", version="1.0.0")
     app.state.orchestrator = orchestrator
     app.state.credentials_repository = credentials_repository
+    app.state.credentials_validator = credentials_validator
     app.state.market_scanner = market_scanner
 
     app.add_middleware(
@@ -102,14 +110,10 @@ def create_app(config: AppConfig) -> FastAPI:
     @app.get("/api/market/top-spreads")
     async def get_market_top_spreads(
         limit: int = 10,
-        paradex_fallback_leverage: float = 2.0,
-        grvt_fallback_leverage: float = 2.0,
         force_refresh: bool = False,
     ) -> dict[str, Any]:
         return await market_scanner.get_top_spreads(
             limit=limit,
-            paradex_fallback_leverage=paradex_fallback_leverage,
-            grvt_fallback_leverage=grvt_fallback_leverage,
             force_refresh=force_refresh,
         )
 
@@ -157,6 +161,35 @@ def create_app(config: AppConfig) -> FastAPI:
     @app.post("/api/credentials/apply", response_model=ActionResponse)
     async def apply_credentials() -> ActionResponse:
         result = await orchestrator.apply_credentials(credentials_repository.get_effective_credentials())
+        return ActionResponse(
+            ok=bool(result.get("ok", False)),
+            message=str(result.get("message", "")),
+            data=result.get("data"),
+        )
+
+    @app.post("/api/credentials/validate", response_model=ActionResponse)
+    async def validate_credentials(payload: ValidateCredentialsRequest) -> ActionResponse:
+        if payload.source == "saved":
+            target_credentials = credentials_repository.get_effective_credentials()
+        else:
+            if payload.payload is None:
+                raise HTTPException(status_code=400, detail="source=draft 时必须提供 payload")
+            raw_payload = payload.payload.model_dump(exclude_none=True)
+            target_credentials = {
+                "paradex": {
+                    "api_key": str(raw_payload.get("paradex", {}).get("api_key", "")).strip(),
+                    "api_secret": str(raw_payload.get("paradex", {}).get("api_secret", "")).strip(),
+                    "passphrase": str(raw_payload.get("paradex", {}).get("passphrase", "")).strip(),
+                },
+                "grvt": {
+                    "api_key": str(raw_payload.get("grvt", {}).get("api_key", "")).strip(),
+                    "api_secret": str(raw_payload.get("grvt", {}).get("api_secret", "")).strip(),
+                    "private_key": str(raw_payload.get("grvt", {}).get("private_key", "")).strip(),
+                    "trading_account_id": str(raw_payload.get("grvt", {}).get("trading_account_id", "")).strip(),
+                },
+            }
+
+        result = await credentials_validator.validate(target_credentials)
         return ActionResponse(
             ok=bool(result.get("ok", False)),
             message=str(result.get("message", "")),

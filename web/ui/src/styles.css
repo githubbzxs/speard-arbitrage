@@ -315,6 +315,10 @@ body {
   align-items: end;
 }
 
+.market-controls-compact {
+  grid-template-columns: minmax(0, 220px);
+}
+
 .inline-fields {
   display: grid;
   gap: 6px;
@@ -463,6 +467,10 @@ tbody tr:hover {
 
 .action-row-3 {
   grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.action-row-2 {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
 .btn {
@@ -686,6 +694,12 @@ input:focus {
   font-size: 13px;
 }
 
+.status-meta {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
 .status-pill {
   display: inline-flex;
   align-items: center;
@@ -775,6 +789,66 @@ input:focus {
   background: var(--panel-secondary);
 }
 
+.validation-panel {
+  display: grid;
+  gap: 12px;
+}
+
+.validation-summary {
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  padding: 10px 12px;
+}
+
+.validation-summary.ok {
+  color: var(--success);
+  background: var(--success-soft);
+}
+
+.validation-summary.fail {
+  color: var(--danger);
+  background: var(--danger-soft);
+}
+
+.validation-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.validation-card {
+  border: 1px solid var(--border);
+  background: var(--panel-secondary);
+  border-radius: 10px;
+  padding: 10px;
+  display: grid;
+  gap: 8px;
+}
+
+.validation-card h4 {
+  margin: 0;
+}
+
+.validation-card p {
+  margin: 0;
+}
+
+.validation-card ul {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: grid;
+  gap: 6px;
+}
+
+.validation-card li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 13px;
+}
+
 @media (max-width: 980px) {
   .nav-tabs {
     grid-template-columns: 1fr;
@@ -810,6 +884,10 @@ input:focus {
     grid-template-columns: 1fr;
   }
 
+  .market-controls-compact {
+    grid-template-columns: 1fr;
+  }
+
   .credential-status-grid {
     grid-template-columns: 1fr;
   }
@@ -821,11 +899,62 @@ input:focus {
   .runtime-switch-grid {
     grid-template-columns: 1fr;
   }
+
+  .validation-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .responsive-table {
+    min-width: 100%;
+  }
+
+  .responsive-table thead {
+    display: none;
+  }
+
+  .responsive-table tbody tr {
+    display: grid;
+    gap: 8px;
+    border: 1px solid var(--table-divider);
+    border-radius: 10px;
+    margin-bottom: 10px;
+    padding: 10px;
+    background: color-mix(in srgb, var(--panel-secondary) 85%, transparent);
+  }
+
+  .responsive-table tbody td {
+    border-bottom: 0;
+    padding: 0;
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 10px;
+    text-align: right;
+  }
+
+  .responsive-table tbody td::before {
+    content: attr(data-label);
+    color: var(--muted);
+    font-size: 12px;
+    font-weight: 600;
+    text-align: left;
+    flex: 1 1 auto;
+  }
+
+  .responsive-table tbody td > * {
+    text-align: right;
+  }
+
+  .responsive-table .empty-cell {
+    display: table-cell;
+    text-align: center;
+    padding: 24px 10px;
+  }
 }
 
 @media (max-width: 640px) {
   .app-shell {
-    padding: 12px;
+    padding: 12px 12px 82px;
   }
 
   .brand h1 {
@@ -854,5 +983,24 @@ input:focus {
 
   .secret-input {
     grid-template-columns: 1fr;
+  }
+
+  .nav-tabs {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 30;
+    padding: 8px 10px calc(8px + env(safe-area-inset-bottom));
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    background: color-mix(in srgb, var(--panel) 92%, transparent);
+    border-top: 1px solid var(--border);
+    border-radius: 0;
+    backdrop-filter: blur(6px);
+  }
+
+  .tab-item {
+    font-size: 12px;
+    padding: 8px 6px;
   }
 }

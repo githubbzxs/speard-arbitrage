@@ -76,10 +76,10 @@ class CredentialsRepository:
                     )
 
     def get_status(self) -> dict[str, dict[str, dict[str, bool | str | None]]]:
-        """返回脱敏状态，只包含是否已配置与更新时间。"""
+        """返回脱敏状态，仅包含是否已配置、更新时间和掩码摘要。"""
         status: dict[str, dict[str, dict[str, bool | str | None]]] = {
             exchange: {
-                field: {"configured": False, "updated_at": None}
+                field: {"configured": False, "updated_at": None, "masked": ""}
                 for field in fields
             }
             for exchange, fields in self._ALLOWED_FIELDS.items()
@@ -95,9 +95,11 @@ class CredentialsRepository:
                 continue
             if field not in status[exchange]:
                 continue
+            value_text = str(value or "")
             status[exchange][field] = {
-                "configured": bool(value),
+                "configured": bool(value_text),
                 "updated_at": updated_at,
+                "masked": self._mask_value(value_text),
             }
 
         return status
@@ -126,3 +128,10 @@ class CredentialsRepository:
     def close(self) -> None:
         """关闭连接。"""
         self._conn.close()
+
+    @staticmethod
+    def _mask_value(value: str) -> str:
+        if not value:
+            return ""
+        tail = value[-4:] if len(value) > 4 else value[-1:]
+        return f"****{tail}"
