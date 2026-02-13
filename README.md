@@ -234,7 +234,11 @@ EOF
 - `GET /api/status`
 - `GET /api/symbols`
 - `GET /api/events?limit=100`
-- `GET /api/market/top-spreads?limit=10&paradex_fallback_leverage=2&grvt_fallback_leverage=2&force_refresh=false`
+- `GET /api/market/top-spreads?limit=10&force_refresh=false`
+- `GET /api/credentials/status`
+- `POST /api/credentials`
+- `POST /api/credentials/apply`
+- `POST /api/credentials/validate` body: `{ "source": "saved" | "draft", "payload"?: { ... } }`
 - `POST /api/runtime/order-execution` body: `{ "live_order_enabled": boolean, "confirm_text"?: string }`
 - `POST /api/runtime/market-data-mode` body: `{ "simulated_market_data": boolean }`
 - `POST /api/engine/start`
@@ -258,5 +262,5 @@ python -m compileall backend
   - `ARB_LIVE_ORDER_ENABLED=false` 先禁用下单，观察稳定后再在网页开启
 - `ARB_DRY_RUN` 仍可兼容旧配置，但建议逐步迁移到双开关。
 - 实盘前请确认交易所 API 权限、杠杆、最小下单量与精度。
-- 名义价差使用 `|实际价差| × min(两所杠杆)` 计算，GRVT 若无公开杠杆字段则使用页面回退杠杆。
+- 名义价差使用 `可执行实际价差 × min(两所最大杠杆)` 计算；可执行实际价差口径为 `max(Paradex买一-GRVT卖一, GRVT买一-Paradex卖一)`。
 - 风控参数请按交易对波动分层配置，不要直接套默认值。
