@@ -216,6 +216,35 @@ body {
   background: var(--success-soft);
 }
 
+.banner-warning {
+  color: var(--warning);
+  border-color: color-mix(in srgb, var(--warning) 45%, transparent);
+  background: color-mix(in srgb, var(--warning) 16%, transparent);
+}
+
+.runtime-pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-left: 10px;
+  padding: 2px 9px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  border: 1px solid var(--border);
+}
+
+.runtime-pill.runtime-dry {
+  color: var(--warning);
+  background: color-mix(in srgb, var(--warning) 16%, transparent);
+}
+
+.runtime-pill.runtime-live {
+  color: var(--success);
+  background: var(--success-soft);
+}
+
 .panel-title {
   display: flex;
   justify-content: space-between;
@@ -292,7 +321,7 @@ body {
 
 table {
   width: 100%;
-  min-width: 720px;
+  min-width: 860px;
   border-collapse: collapse;
 }
 
@@ -367,6 +396,10 @@ tbody tr:hover {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 10px;
+}
+
+.action-row-3 {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
 .btn {
@@ -492,6 +525,25 @@ input:focus {
 .credential-form {
   border-top: 1px solid var(--border);
   padding-top: 14px;
+}
+
+.credential-advanced {
+  border: 1px dashed var(--border);
+  border-radius: 12px;
+  padding: 10px;
+  background: var(--panel-secondary);
+}
+
+.credential-advanced summary {
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--muted);
+  margin-bottom: 10px;
+}
+
+.credential-advanced[open] summary {
+  margin-bottom: 10px;
 }
 
 .form-title {

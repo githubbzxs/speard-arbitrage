@@ -12,7 +12,7 @@ import type {
   ParadexCredentialsInput
 } from "./api/client";
 import { useDashboard } from "./hooks/useDashboard";
-import type { SymbolParamsPayload, TradingMode } from "./types";
+import type { PublicConfig, SymbolParamsPayload, TradingMode } from "./types";
 import { formatNumber, formatSigned, formatTimestamp } from "./utils/format";
 
 type ThemeMode = "dark" | "light";
@@ -27,31 +27,38 @@ const EMPTY_PARADEX_FORM: ParadexCredentialsInput = {
 
 const EMPTY_GRVT_FORM: GrvtCredentialsInput = {
   api_key: "",
-  api_secret: "",
   private_key: "",
   trading_account_id: ""
 };
 
-const PARADEX_FIELDS: Array<{
-  key: keyof ParadexCredentialsInput;
+type CredentialField<T> = {
+  key: keyof T;
   label: string;
   placeholder: string;
-}> = [
+  optional?: boolean;
+};
+
+const PARADEX_BASIC_FIELDS: Array<CredentialField<ParadexCredentialsInput>> = [
   { key: "api_key", label: "API Key", placeholder: "请输入 Paradex API Key" },
-  { key: "api_secret", label: "API Secret", placeholder: "请输入 Paradex API Secret" },
-  { key: "passphrase", label: "Passphrase", placeholder: "请输入 Paradex Passphrase" }
+  { key: "api_secret", label: "API Secret", placeholder: "请输入 Paradex API Secret" }
 ];
 
-const GRVT_FIELDS: Array<{
-  key: keyof GrvtCredentialsInput;
-  label: string;
-  placeholder: string;
-}> = [
-  { key: "api_key", label: "API Key", placeholder: "请输入 GRVT API Key" },
-  { key: "api_secret", label: "API Secret", placeholder: "请输入 GRVT API Secret" },
+const PARADEX_ADVANCED_FIELDS: Array<CredentialField<ParadexCredentialsInput>> = [
+  { key: "passphrase", label: "Passphrase（可选）", placeholder: "请输入 Paradex Passphrase", optional: true }
+];
+
+const PARADEX_ALL_FIELDS = [...PARADEX_BASIC_FIELDS, ...PARADEX_ADVANCED_FIELDS];
+
+const GRVT_BASIC_FIELDS: Array<CredentialField<GrvtCredentialsInput>> = [
   { key: "private_key", label: "Private Key", placeholder: "请输入 GRVT Private Key" },
   { key: "trading_account_id", label: "Trading Account ID", placeholder: "请输入 GRVT Trading Account ID" }
 ];
+
+const GRVT_ADVANCED_FIELDS: Array<CredentialField<GrvtCredentialsInput>> = [
+  { key: "api_key", label: "API Key（可选）", placeholder: "请输入 GRVT API Key", optional: true }
+];
+
+const GRVT_ALL_FIELDS = [...GRVT_BASIC_FIELDS, ...GRVT_ADVANCED_FIELDS];
 
 function parseOptionalNumber(value: string): number | undefined {
   const trimmed = value.trim();
@@ -115,7 +122,7 @@ function readThemePreference(): ThemeMode {
 
 function collectParadexPayload(form: ParadexCredentialsInput): Partial<ParadexCredentialsInput> {
   const payload: Partial<ParadexCredentialsInput> = {};
-  for (const field of PARADEX_FIELDS) {
+  for (const field of PARADEX_ALL_FIELDS) {
     const value = form[field.key].trim();
     if (value) {
       payload[field.key] = value;
@@ -126,7 +133,7 @@ function collectParadexPayload(form: ParadexCredentialsInput): Partial<ParadexCr
 
 function collectGrvtPayload(form: GrvtCredentialsInput): Partial<GrvtCredentialsInput> {
   const payload: Partial<GrvtCredentialsInput> = {};
-  for (const field of GRVT_FIELDS) {
+  for (const field of GRVT_ALL_FIELDS) {
     const value = form[field.key].trim();
     if (value) {
       payload[field.key] = value;
@@ -165,6 +172,10 @@ export default function App() {
   } = useDashboard();
 
   const [theme, setTheme] = useState<ThemeMode>(readThemePreference);
+  const [publicConfig, setPublicConfig] = useState<PublicConfig | null>(null);
+  const [publicConfigLoading, setPublicConfigLoading] = useState(true);
+  const [publicConfigError, setPublicConfigError] = useState("");
+
   const [modeDraft, setModeDraft] = useState<TradingMode>("normal_arb");
   const [selectedSymbol, setSelectedSymbol] = useState("");
   const [zEntry, setZEntry] = useState("");
@@ -175,6 +186,7 @@ export default function App() {
   const [credentialsStatus, setCredentialsStatus] = useState<CredentialsStatus>(DEFAULT_CREDENTIALS_STATUS);
   const [credentialsLoading, setCredentialsLoading] = useState(true);
   const [credentialsSaving, setCredentialsSaving] = useState(false);
+  const [credentialsApplying, setCredentialsApplying] = useState(false);
   const [credentialsError, setCredentialsError] = useState("");
   const [credentialsMessage, setCredentialsMessage] = useState("");
   const [paradexForm, setParadexForm] = useState<ParadexCredentialsInput>(EMPTY_PARADEX_FORM);
@@ -185,6 +197,23 @@ export default function App() {
     window.localStorage.setItem(THEME_STORAGE_KEY, theme);
     document.documentElement.setAttribute("data-theme", theme);
   }, [theme]);
+
+  const loadPublicConfig = useCallback(async () => {
+    setPublicConfigLoading(true);
+    try {
+      const config = await apiClient.getPublicConfig();
+      setPublicConfig(config);
+      setPublicConfigError("");
+    } catch (error) {
+      setPublicConfigError(`加载运行配置失败：${getErrorMessage(error)}`);
+    } finally {
+      setPublicConfigLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadPublicConfig();
+  }, [loadPublicConfig]);
 
   useEffect(() => {
     setModeDraft(status.mode);
@@ -332,6 +361,27 @@ export default function App() {
     }
   };
 
+  const onApplyCredentialsClick = async () => {
+    setCredentialsError("");
+    setCredentialsMessage("");
+    setCredentialsApplying(true);
+
+    try {
+      const result = await apiClient.applyCredentials();
+      if (!result.ok) {
+        setCredentialsError(result.message || "应用凭证失败");
+        return;
+      }
+
+      setCredentialsMessage(result.message || "凭证已应用");
+      await loadCredentialsStatus(true);
+    } catch (error) {
+      setCredentialsError(`应用凭证失败：${getErrorMessage(error)}`);
+    } finally {
+      setCredentialsApplying(false);
+    }
+  };
+
   const toggleFieldVisibility = (fieldKey: string) => {
     setVisibleFields((previous) => ({
       ...previous,
@@ -343,13 +393,20 @@ export default function App() {
     setTheme((previous) => (previous === "dark" ? "light" : "dark"));
   };
 
+  const isDryRun = publicConfig?.runtime.dryRun ?? true;
+
   return (
     <div className="app-shell">
       <header className="panel topbar">
         <div className="brand">
           <p className="eyebrow">跨所套利系统</p>
           <h1>前端控制台</h1>
-          <p className="subtitle">实时观察引擎、风险与交易对状态</p>
+          <p className="subtitle">
+            实时观察引擎、风险与交易对状态
+            <span className={`runtime-pill ${isDryRun ? "runtime-dry" : "runtime-live"}`}>
+              {publicConfigLoading ? "加载中" : isDryRun ? "DRY-RUN" : "LIVE"}
+            </span>
+          </p>
         </div>
 
         <div className="topbar-right">
@@ -385,6 +442,12 @@ export default function App() {
 
       {errorMessage ? <div className="banner banner-error">{errorMessage}</div> : null}
       {actionMessage ? <div className="banner banner-success">{actionMessage}</div> : null}
+      {publicConfigError ? <div className="banner banner-error">{publicConfigError}</div> : null}
+      {!publicConfigLoading && isDryRun ? (
+        <div className="banner banner-warning">
+          当前为 dry-run（模拟行情）模式，价差与仓位变化可能剧烈抖动，且不会真实下单。
+        </div>
+      ) : null}
 
       <section className="panel overview-panel">
         <div className="panel-title">
@@ -424,7 +487,8 @@ export default function App() {
               <thead>
                 <tr>
                   <th>Symbol</th>
-                  <th>Spread</th>
+                  <th>Spread (bps)</th>
+                  <th>Spread (price)</th>
                   <th>ZScore</th>
                   <th>仓位</th>
                   <th>信号</th>
@@ -435,7 +499,7 @@ export default function App() {
               <tbody>
                 {symbols.length === 0 ? (
                   <tr>
-                    <td colSpan={7} className="empty-cell">
+                    <td colSpan={8} className="empty-cell">
                       当前没有交易对数据
                     </td>
                   </tr>
@@ -443,7 +507,8 @@ export default function App() {
                   symbols.map((item) => (
                     <tr key={item.symbol}>
                       <td>{item.symbol}</td>
-                      <td>{formatNumber(item.spread, 4)}</td>
+                      <td>{formatSigned(item.spreadBps, 2)}</td>
+                      <td>{formatSigned(item.spreadPrice, 2)}</td>
                       <td>{formatNumber(item.zscore, 3)}</td>
                       <td>{formatSigned(item.position, 4)}</td>
                       <td>
@@ -543,8 +608,8 @@ export default function App() {
 
             {selectedSymbolInfo ? (
               <p className="hint">
-                当前 {selectedSymbolInfo.symbol}：spread {formatNumber(selectedSymbolInfo.spread, 4)} / zscore{" "}
-                {formatNumber(selectedSymbolInfo.zscore, 3)} / 仓位{" "}
+                当前 {selectedSymbolInfo.symbol}：spread(bps) {formatSigned(selectedSymbolInfo.spreadBps, 2)} / spread(price){" "}
+                {formatSigned(selectedSymbolInfo.spreadPrice, 2)} / zscore {formatNumber(selectedSymbolInfo.zscore, 3)} / 仓位{" "}
                 {formatSigned(selectedSymbolInfo.position, 4)}
               </p>
             ) : (
@@ -566,14 +631,20 @@ export default function App() {
           <form className="form-block credential-form" onSubmit={onCredentialsSubmit}>
             <div className="form-title">
               <h3>API凭证配置</h3>
-              <small>{credentialsSaving ? "正在保存..." : "提交到 /api/credentials"}</small>
+              <small>
+                {credentialsSaving
+                  ? "正在保存..."
+                  : credentialsApplying
+                    ? "正在应用..."
+                    : "保存：/api/credentials / 应用：/api/credentials/apply"}
+              </small>
             </div>
 
             <div className="credential-status-grid">
               <article className="credential-status-card">
                 <h4>Paradex 状态</h4>
                 <ul>
-                  {PARADEX_FIELDS.map((field) => {
+                  {PARADEX_ALL_FIELDS.map((field) => {
                     const configured = credentialsStatus.paradex[field.key].configured;
                     return (
                       <li key={`paradex-status-${field.key}`}>
@@ -590,7 +661,7 @@ export default function App() {
               <article className="credential-status-card">
                 <h4>GRVT 状态</h4>
                 <ul>
-                  {GRVT_FIELDS.map((field) => {
+                  {GRVT_ALL_FIELDS.map((field) => {
                     const configured = credentialsStatus.grvt[field.key].configured;
                     return (
                       <li key={`grvt-status-${field.key}`}>
@@ -608,7 +679,7 @@ export default function App() {
             <div className="credential-group">
               <h4>Paradex</h4>
               <div className="credential-grid">
-                {PARADEX_FIELDS.map((field) => {
+                {PARADEX_BASIC_FIELDS.map((field) => {
                   const fieldKey = `paradex.${field.key}`;
                   const visible = Boolean(visibleFields[fieldKey]);
                   return (
@@ -640,12 +711,49 @@ export default function App() {
                   );
                 })}
               </div>
+
+              <details className="credential-advanced">
+                <summary>高级可选</summary>
+                <div className="credential-grid">
+                  {PARADEX_ADVANCED_FIELDS.map((field) => {
+                    const fieldKey = `paradex.${field.key}`;
+                    const visible = Boolean(visibleFields[fieldKey]);
+                    return (
+                      <div key={`paradex-input-${field.key}`} className="credential-field">
+                        <label htmlFor={`paradex-${field.key}`}>{field.label}</label>
+                        <div className="secret-input">
+                          <input
+                            id={`paradex-${field.key}`}
+                            type={visible ? "text" : "password"}
+                            value={paradexForm[field.key]}
+                            onChange={(event) =>
+                              setParadexForm((previous) => ({
+                                ...previous,
+                                [field.key]: event.target.value
+                              }))
+                            }
+                            placeholder={field.placeholder}
+                            autoComplete="off"
+                          />
+                          <button
+                            type="button"
+                            className="btn btn-ghost btn-inline"
+                            onClick={() => toggleFieldVisibility(fieldKey)}
+                          >
+                            {visible ? "隐藏" : "显示"}
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </details>
             </div>
 
             <div className="credential-group">
               <h4>GRVT</h4>
               <div className="credential-grid">
-                {GRVT_FIELDS.map((field) => {
+                {GRVT_BASIC_FIELDS.map((field) => {
                   const fieldKey = `grvt.${field.key}`;
                   const visible = Boolean(visibleFields[fieldKey]);
                   return (
@@ -677,22 +785,70 @@ export default function App() {
                   );
                 })}
               </div>
+
+              <details className="credential-advanced">
+                <summary>高级可选</summary>
+                <div className="credential-grid">
+                  {GRVT_ADVANCED_FIELDS.map((field) => {
+                    const fieldKey = `grvt.${field.key}`;
+                    const visible = Boolean(visibleFields[fieldKey]);
+                    return (
+                      <div key={`grvt-input-${field.key}`} className="credential-field">
+                        <label htmlFor={`grvt-${field.key}`}>{field.label}</label>
+                        <div className="secret-input">
+                          <input
+                            id={`grvt-${field.key}`}
+                            type={visible ? "text" : "password"}
+                            value={grvtForm[field.key]}
+                            onChange={(event) =>
+                              setGrvtForm((previous) => ({
+                                ...previous,
+                                [field.key]: event.target.value
+                              }))
+                            }
+                            placeholder={field.placeholder}
+                            autoComplete="off"
+                          />
+                          <button
+                            type="button"
+                            className="btn btn-ghost btn-inline"
+                            onClick={() => toggleFieldVisibility(fieldKey)}
+                          >
+                            {visible ? "隐藏" : "显示"}
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </details>
             </div>
 
-            <p className="hint">状态接口：GET /api/credentials/status</p>
+            <p className="hint">状态接口：GET /api/credentials/status（不回显明文）</p>
+            {status.engineStatus !== "stopped" ? (
+              <p className="hint">提示：应用凭证前建议先停止引擎，避免运行中热切换。</p>
+            ) : null}
             {credentialsLoading ? <p className="hint">正在加载凭证状态...</p> : null}
             {credentialsError ? <p className="form-error">{credentialsError}</p> : null}
             {credentialsMessage ? <p className="form-success">{credentialsMessage}</p> : null}
 
-            <div className="action-row">
+            <div className="action-row action-row-3">
               <button className="btn btn-primary" type="submit" disabled={credentialsSaving}>
                 保存凭证
               </button>
               <button
                 className="btn btn-secondary"
                 type="button"
+                onClick={() => void onApplyCredentialsClick()}
+                disabled={credentialsSaving || credentialsApplying || status.engineStatus !== "stopped"}
+              >
+                应用凭证
+              </button>
+              <button
+                className="btn btn-secondary"
+                type="button"
                 onClick={() => void loadCredentialsStatus(false)}
-                disabled={credentialsSaving || credentialsLoading}
+                disabled={credentialsSaving || credentialsApplying || credentialsLoading}
               >
                 刷新凭证状态
               </button>

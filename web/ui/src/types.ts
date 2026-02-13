@@ -33,12 +33,22 @@ export const DEFAULT_STATUS: DashboardStatus = {
 
 export interface SymbolRow {
   symbol: string;
-  spread: number;
+  spreadBps: number;
+  spreadPrice: number;
   zscore: number;
   position: number;
   signal: string;
   status: string;
   updatedAt: string;
+}
+
+export interface RuntimeConfig {
+  dryRun: boolean;
+  defaultMode: TradingMode;
+}
+
+export interface PublicConfig {
+  runtime: RuntimeConfig;
 }
 
 export interface EventLog {

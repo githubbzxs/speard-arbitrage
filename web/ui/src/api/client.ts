@@ -5,6 +5,7 @@ import type {
   EngineStatus,
   EventLevel,
   EventLog,
+  PublicConfig,
   SymbolParamsPayload,
   SymbolRow,
   TradingMode
@@ -14,7 +15,7 @@ const REQUEST_TIMEOUT_MS = 8000;
 const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL ?? "").trim();
 
 const PARADEX_FIELDS = ["api_key", "api_secret", "passphrase"] as const;
-const GRVT_FIELDS = ["api_key", "api_secret", "private_key", "trading_account_id"] as const;
+const GRVT_FIELDS = ["private_key", "trading_account_id", "api_key"] as const;
 
 export type ParadexCredentialField = (typeof PARADEX_FIELDS)[number];
 export type GrvtCredentialField = (typeof GRVT_FIELDS)[number];
@@ -27,7 +28,6 @@ export interface ParadexCredentialsInput {
 
 export interface GrvtCredentialsInput {
   api_key: string;
-  api_secret: string;
   private_key: string;
   trading_account_id: string;
 }
@@ -53,10 +53,9 @@ export const DEFAULT_CREDENTIALS_STATUS: CredentialsStatus = {
     passphrase: { configured: false }
   },
   grvt: {
-    api_key: { configured: false },
-    api_secret: { configured: false },
     private_key: { configured: false },
-    trading_account_id: { configured: false }
+    trading_account_id: { configured: false },
+    api_key: { configured: false }
   }
 };
 
@@ -68,10 +67,9 @@ function cloneDefaultCredentialsStatus(): CredentialsStatus {
       passphrase: { configured: false }
     },
     grvt: {
-      api_key: { configured: false },
-      api_secret: { configured: false },
       private_key: { configured: false },
-      trading_account_id: { configured: false }
+      trading_account_id: { configured: false },
+      api_key: { configured: false }
     }
   };
 }
@@ -297,7 +295,8 @@ export function normalizeSymbol(data: unknown): SymbolRow | null {
 
   return {
     symbol,
-    spread: pickNumber(record, ["spread", "spread_bps", "spreadBps"], 0),
+    spreadBps: pickNumber(record, ["spread_bps", "spreadBps", "spread"], 0),
+    spreadPrice: pickNumber(record, ["spread_price", "spreadPrice"], 0),
     zscore: pickNumber(record, ["zscore", "z_score", "zScore"], 0),
     position: pickNumber(record, ["position", "net_position", "netPosition"], 0),
     signal: pickString(record, ["signal"], "neutral"),
@@ -488,6 +487,35 @@ export function normalizeCredentialsStatus(data: unknown): CredentialsStatus {
   };
 }
 
+export function normalizePublicConfig(data: unknown): PublicConfig {
+  const fallback: PublicConfig = {
+    runtime: {
+      dryRun: true,
+      defaultMode: "normal_arb"
+    }
+  };
+
+  const record = toRecord(data);
+  if (!record) {
+    return fallback;
+  }
+
+  const runtimeRecord = toRecord(record.runtime) ?? toRecord(record.runtime_config) ?? toRecord(record.runtimeConfig);
+  if (!runtimeRecord) {
+    return fallback;
+  }
+
+  const dryRunRaw = runtimeRecord.dry_run ?? runtimeRecord.dryRun;
+  const defaultModeRaw = runtimeRecord.default_mode ?? runtimeRecord.defaultMode;
+
+  return {
+    runtime: {
+      dryRun: typeof dryRunRaw === "boolean" ? dryRunRaw : fallback.runtime.dryRun,
+      defaultMode: defaultModeRaw === "zero_wear" ? "zero_wear" : "normal_arb"
+    }
+  };
+}
+
 export const apiClient = {
   async getStatus(): Promise<DashboardStatus> {
     const response = await requestJson<unknown>("/api/status");
@@ -552,5 +580,17 @@ export const apiClient = {
       body: JSON.stringify(payload)
     });
     return normalizeActionResult(response, "API 凭证保存成功");
+  },
+
+  async applyCredentials(): Promise<ActionResult> {
+    const response = await requestJson<unknown>("/api/credentials/apply", {
+      method: "POST"
+    });
+    return normalizeActionResult(response, "凭证已应用");
+  },
+
+  async getPublicConfig(): Promise<PublicConfig> {
+    const response = await requestJson<unknown>("/api/config");
+    return normalizePublicConfig(response);
   }
 };
