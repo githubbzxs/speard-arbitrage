@@ -27,6 +27,11 @@
   - Impact：`backend/arbbot/exchanges/paradex_adapter.py`、`backend/arbbot/exchanges/grvt_adapter.py`、`web/ui/src/hooks/useDashboard.ts`。
   - Verify：dry-run 启动引擎后，`Spread(price)` 通常保持在合理区间（不会轻易出现 100+），页面刷新更平滑。
 
+- [2026-02-13] 拆分运行时双开关：行情模式与下单权限
+  - Why：`ARB_DRY_RUN` 将“行情来源”和“下单行为”绑定，无法满足“真实行情 + 可控下单”。
+  - Impact：`backend/arbbot/config.py`、`backend/arbbot/strategy/execution_engine.py`、`backend/arbbot/strategy/orchestrator.py`、`backend/arbbot/web/api.py`、`web/ui/src/App.tsx`、`web/ui/src/api/client.ts`、`web/ui/src/types.ts`。
+  - Verify：`python -m pytest backend/tests`、`cd web/ui && npm run build`，并验证 `POST /api/runtime/order-execution` / `POST /api/runtime/market-data-mode`。
+
 - [2026-02-13] 前端默认深色主题并支持手动切换
   - Why：满足界面深色模式诉求，同时保留可切换性。
   - Impact：`web/ui/src/styles.css`、`web/ui/src/App.tsx`。
@@ -49,6 +54,7 @@
   - 已完成深色主题、API 凭证表单、凭证状态接口与持久化、Linux + Nginx 部署文档。
   - 已新增 `GET /api/credentials/status`、`POST /api/credentials`、`POST /api/credentials/apply`。
   - `SymbolSnapshot` 增加 `spread_price` 字段，用于前端展示绝对价差。
+  - 已新增运行时双开关接口：`POST /api/runtime/order-execution`、`POST /api/runtime/market-data-mode`。
 - 下一步建议：
   - 为凭证接口增加鉴权（当前默认无鉴权）。
   - 将 FastAPI `on_event` 迁移到 lifespan，消除弃用警告。
