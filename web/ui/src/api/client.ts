@@ -13,6 +13,69 @@ import type {
 const REQUEST_TIMEOUT_MS = 8000;
 const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL ?? "").trim();
 
+const PARADEX_FIELDS = ["api_key", "api_secret", "passphrase"] as const;
+const GRVT_FIELDS = ["api_key", "api_secret", "private_key", "trading_account_id"] as const;
+
+export type ParadexCredentialField = (typeof PARADEX_FIELDS)[number];
+export type GrvtCredentialField = (typeof GRVT_FIELDS)[number];
+
+export interface ParadexCredentialsInput {
+  api_key: string;
+  api_secret: string;
+  passphrase: string;
+}
+
+export interface GrvtCredentialsInput {
+  api_key: string;
+  api_secret: string;
+  private_key: string;
+  trading_account_id: string;
+}
+
+export interface CredentialsPayload {
+  paradex?: Partial<ParadexCredentialsInput>;
+  grvt?: Partial<GrvtCredentialsInput>;
+}
+
+export interface CredentialFieldStatus {
+  configured: boolean;
+}
+
+export interface CredentialsStatus {
+  paradex: Record<ParadexCredentialField, CredentialFieldStatus>;
+  grvt: Record<GrvtCredentialField, CredentialFieldStatus>;
+}
+
+export const DEFAULT_CREDENTIALS_STATUS: CredentialsStatus = {
+  paradex: {
+    api_key: { configured: false },
+    api_secret: { configured: false },
+    passphrase: { configured: false }
+  },
+  grvt: {
+    api_key: { configured: false },
+    api_secret: { configured: false },
+    private_key: { configured: false },
+    trading_account_id: { configured: false }
+  }
+};
+
+function cloneDefaultCredentialsStatus(): CredentialsStatus {
+  return {
+    paradex: {
+      api_key: { configured: false },
+      api_secret: { configured: false },
+      passphrase: { configured: false }
+    },
+    grvt: {
+      api_key: { configured: false },
+      api_secret: { configured: false },
+      private_key: { configured: false },
+      trading_account_id: { configured: false }
+    }
+  };
+}
+
 function buildUrl(path: string): string {
   if (/^https?:\/\//i.test(path)) {
     return path;
@@ -58,7 +121,7 @@ async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
     return (rawText as unknown) as T;
   } catch (error) {
     if (error instanceof DOMException && error.name === "AbortError") {
-      throw new Error(`请求超时（${REQUEST_TIMEOUT_MS}ms）`);
+      throw new Error(`请求超时（${REQUEST_TIMEOUT_MS}ms），请稍后重试`);
     }
     throw error;
   } finally {
@@ -300,6 +363,127 @@ function normalizeActionResult(data: unknown, fallback: string): ActionResult {
   };
 }
 
+function normalizeConfiguredFlag(value: unknown): boolean {
+  if (typeof value === "boolean") {
+    return value;
+  }
+
+  if (typeof value === "number") {
+    return value > 0;
+  }
+
+  if (typeof value === "string") {
+    const normalized = value.trim().toLowerCase();
+    if (!normalized) {
+      return false;
+    }
+    if (
+      normalized === "true" ||
+      normalized === "1" ||
+      normalized === "yes" ||
+      normalized === "configured" ||
+      normalized === "set"
+    ) {
+      return true;
+    }
+    if (normalized === "false" || normalized === "0" || normalized === "no" || normalized === "unset") {
+      return false;
+    }
+  }
+
+  const record = toRecord(value);
+  if (record) {
+    if ("configured" in record) {
+      return normalizeConfiguredFlag(record.configured);
+    }
+    if ("is_configured" in record) {
+      return normalizeConfiguredFlag(record.is_configured);
+    }
+    if ("isConfigured" in record) {
+      return normalizeConfiguredFlag(record.isConfigured);
+    }
+    if ("set" in record) {
+      return normalizeConfiguredFlag(record.set);
+    }
+    if ("exists" in record) {
+      return normalizeConfiguredFlag(record.exists);
+    }
+  }
+
+  return false;
+}
+
+function extractConfiguredFieldSet(record: Record<string, unknown>): Set<string> {
+  const set = new Set<string>();
+
+  const candidates = ["configured_fields", "configuredFields", "fields"];
+  for (const key of candidates) {
+    const value = record[key];
+    if (!Array.isArray(value)) {
+      continue;
+    }
+    for (const field of value) {
+      if (typeof field === "string" && field.trim()) {
+        set.add(field);
+      }
+    }
+  }
+
+  return set;
+}
+
+function normalizeExchangeStatus<T extends string>(
+  source: unknown,
+  fields: readonly T[]
+): Record<T, CredentialFieldStatus> {
+  const result = {} as Record<T, CredentialFieldStatus>;
+  for (const field of fields) {
+    result[field] = { configured: false };
+  }
+
+  if (Array.isArray(source)) {
+    const configuredSet = new Set(source.filter((item): item is string => typeof item === "string"));
+    for (const field of fields) {
+      result[field] = { configured: configuredSet.has(field) };
+    }
+    return result;
+  }
+
+  const record = toRecord(source);
+  if (!record) {
+    return result;
+  }
+
+  const configuredSet = extractConfiguredFieldSet(record);
+
+  for (const field of fields) {
+    if (field in record) {
+      result[field] = { configured: normalizeConfiguredFlag(record[field]) };
+      continue;
+    }
+
+    result[field] = { configured: configuredSet.has(field) };
+  }
+
+  return result;
+}
+
+export function normalizeCredentialsStatus(data: unknown): CredentialsStatus {
+  const fallback = cloneDefaultCredentialsStatus();
+  const record = toRecord(data);
+  if (!record) {
+    return fallback;
+  }
+
+  const paradexSource = record.paradex ?? record.paradex_status ?? record.paradexStatus;
+  const grvtSource = record.grvt ?? record.grvt_status ?? record.grvtStatus;
+
+  return {
+    paradex: normalizeExchangeStatus(paradexSource, PARADEX_FIELDS),
+    grvt: normalizeExchangeStatus(grvtSource, GRVT_FIELDS)
+  };
+}
+
 export const apiClient = {
   async getStatus(): Promise<DashboardStatus> {
     const response = await requestJson<unknown>("/api/status");
@@ -351,5 +535,18 @@ export const apiClient = {
       method: "POST"
     });
     return normalizeActionResult(response, `${symbol} 平仓命令已发送`);
+  },
+
+  async getCredentialsStatus(): Promise<CredentialsStatus> {
+    const response = await requestJson<unknown>("/api/credentials/status");
+    return normalizeCredentialsStatus(response);
+  },
+
+  async saveCredentials(payload: CredentialsPayload): Promise<ActionResult> {
+    const response = await requestJson<unknown>("/api/credentials", {
+      method: "POST",
+      body: JSON.stringify(payload)
+    });
+    return normalizeActionResult(response, "API 凭证保存成功");
   }
 };
