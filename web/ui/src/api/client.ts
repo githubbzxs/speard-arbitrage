@@ -6,6 +6,7 @@ import type {
   EventLevel,
   EventLog,
   PublicConfig,
+  SupportedSymbolInfo,
   SymbolParamsPayload,
   SymbolRow,
   TradingMode
@@ -493,6 +494,32 @@ export function normalizeCredentialsStatus(data: unknown): CredentialsStatus {
   };
 }
 
+function normalizeSupportedSymbol(data: unknown): SupportedSymbolInfo | null {
+  const record = toRecord(data);
+  if (!record) {
+    return null;
+  }
+
+  const symbol = pickString(record, ["symbol"], "");
+  if (!symbol) {
+    return null;
+  }
+
+  return {
+    symbol,
+    paradexMarket: pickString(record, ["paradex_market", "paradexMarket"], ""),
+    grvtMarket: pickString(record, ["grvt_market", "grvtMarket"], ""),
+    baseAsset: pickString(record, ["base_asset", "baseAsset"], symbol),
+    quoteAsset: pickString(record, ["quote_asset", "quoteAsset"], "USDT"),
+    recommendedLeverage: Math.max(1, pickNumber(record, ["recommended_leverage", "recommendedLeverage"], 2)),
+    leverageNote: pickString(
+      record,
+      ["leverage_note", "leverageNote"],
+      "建议低杠杆，用户可在交易所调整"
+    )
+  };
+}
+
 export function normalizePublicConfig(data: unknown): PublicConfig {
   const fallback: PublicConfig = {
     runtime: {
@@ -501,7 +528,8 @@ export function normalizePublicConfig(data: unknown): PublicConfig {
       liveOrderEnabled: false,
       enableOrderConfirmationText: "ENABLE_LIVE_ORDER",
       defaultMode: "normal_arb"
-    }
+    },
+    symbols: []
   };
 
   const record = toRecord(data);
@@ -510,8 +538,15 @@ export function normalizePublicConfig(data: unknown): PublicConfig {
   }
 
   const runtimeRecord = toRecord(record.runtime) ?? toRecord(record.runtime_config) ?? toRecord(record.runtimeConfig);
+  const symbolItems = extractArray(record.symbols)
+    .map((item) => normalizeSupportedSymbol(item))
+    .filter((item): item is SupportedSymbolInfo => item !== null);
+
   if (!runtimeRecord) {
-    return fallback;
+    return {
+      ...fallback,
+      symbols: symbolItems
+    };
   }
 
   const dryRunRaw = runtimeRecord.dry_run ?? runtimeRecord.dryRun;
@@ -536,7 +571,8 @@ export function normalizePublicConfig(data: unknown): PublicConfig {
           ? confirmationTextRaw
           : fallback.runtime.enableOrderConfirmationText,
       defaultMode: defaultModeRaw === "zero_wear" ? "zero_wear" : "normal_arb"
-    }
+    },
+    symbols: symbolItems
   };
 }
 

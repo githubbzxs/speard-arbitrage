@@ -47,3 +47,27 @@ def test_default_market_mapping_for_standard_symbols(monkeypatch) -> None:
 
     assert [item.paradex_market for item in config.symbols] == ["BTC/USD:USDC", "ETH/USD:USDC"]
     assert [item.grvt_market for item in config.symbols] == ["BTC_USDT_Perp", "ETH_USDT_Perp"]
+
+
+def test_default_symbols_expand_to_ten_pairs(monkeypatch) -> None:
+    monkeypatch.delenv("ARB_SYMBOLS", raising=False)
+    monkeypatch.delenv("PARADEX_MARKETS", raising=False)
+    monkeypatch.delenv("GRVT_MARKETS", raising=False)
+    monkeypatch.delenv("ARB_RECOMMENDED_LEVERAGES", raising=False)
+
+    config = AppConfig.from_env(env_path=None)
+
+    assert len(config.symbols) == 10
+    assert [item.symbol for item in config.symbols] == [
+        "BTC-PERP",
+        "ETH-PERP",
+        "SOL-PERP",
+        "XRP-PERP",
+        "DOGE-PERP",
+        "ADA-PERP",
+        "LINK-PERP",
+        "AVAX-PERP",
+        "DOT-PERP",
+        "LTC-PERP",
+    ]
+    assert all(item.recommended_leverage == 2 for item in config.symbols)

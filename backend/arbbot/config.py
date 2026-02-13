@@ -39,22 +39,122 @@ def _split_csv(raw: str | None, default: str) -> list[str]:
     return [part.strip() for part in value.split(",") if part.strip()]
 
 
+DEFAULT_SYMBOL_SPECS: dict[str, dict[str, Any]] = {
+    "BTC-PERP": {
+        "base_asset": "BTC",
+        "quote_asset": "USDT",
+        "paradex_market": "BTC/USD:USDC",
+        "grvt_market": "BTC_USDT_Perp",
+        "recommended_leverage": 2,
+        "leverage_note": "主流币，建议 2x 以内",
+    },
+    "ETH-PERP": {
+        "base_asset": "ETH",
+        "quote_asset": "USDT",
+        "paradex_market": "ETH/USD:USDC",
+        "grvt_market": "ETH_USDT_Perp",
+        "recommended_leverage": 2,
+        "leverage_note": "主流币，建议 2x 以内",
+    },
+    "SOL-PERP": {
+        "base_asset": "SOL",
+        "quote_asset": "USDT",
+        "paradex_market": "SOL/USD:USDC",
+        "grvt_market": "SOL_USDT_Perp",
+        "recommended_leverage": 2,
+        "leverage_note": "波动较高，建议 2x 或更低",
+    },
+    "XRP-PERP": {
+        "base_asset": "XRP",
+        "quote_asset": "USDT",
+        "paradex_market": "XRP/USD:USDC",
+        "grvt_market": "XRP_USDT_Perp",
+        "recommended_leverage": 2,
+        "leverage_note": "波动较高，建议 2x 或更低",
+    },
+    "DOGE-PERP": {
+        "base_asset": "DOGE",
+        "quote_asset": "USDT",
+        "paradex_market": "DOGE/USD:USDC",
+        "grvt_market": "DOGE_USDT_Perp",
+        "recommended_leverage": 2,
+        "leverage_note": "高波动，建议 2x 或更低",
+    },
+    "ADA-PERP": {
+        "base_asset": "ADA",
+        "quote_asset": "USDT",
+        "paradex_market": "ADA/USD:USDC",
+        "grvt_market": "ADA_USDT_Perp",
+        "recommended_leverage": 2,
+        "leverage_note": "中高波动，建议 2x 或更低",
+    },
+    "LINK-PERP": {
+        "base_asset": "LINK",
+        "quote_asset": "USDT",
+        "paradex_market": "LINK/USD:USDC",
+        "grvt_market": "LINK_USDT_Perp",
+        "recommended_leverage": 2,
+        "leverage_note": "中高波动，建议 2x 或更低",
+    },
+    "AVAX-PERP": {
+        "base_asset": "AVAX",
+        "quote_asset": "USDT",
+        "paradex_market": "AVAX/USD:USDC",
+        "grvt_market": "AVAX_USDT_Perp",
+        "recommended_leverage": 2,
+        "leverage_note": "中高波动，建议 2x 或更低",
+    },
+    "DOT-PERP": {
+        "base_asset": "DOT",
+        "quote_asset": "USDT",
+        "paradex_market": "DOT/USD:USDC",
+        "grvt_market": "DOT_USDT_Perp",
+        "recommended_leverage": 2,
+        "leverage_note": "中高波动，建议 2x 或更低",
+    },
+    "LTC-PERP": {
+        "base_asset": "LTC",
+        "quote_asset": "USDT",
+        "paradex_market": "LTC/USD:USDC",
+        "grvt_market": "LTC_USDT_Perp",
+        "recommended_leverage": 2,
+        "leverage_note": "中等波动，建议 2x 或更低",
+    },
+}
+
+
+def _extract_base_asset(symbol: str) -> str:
+    normalized = symbol.upper().strip()
+    if "-PERP" in normalized:
+        return normalized.split("-PERP", 1)[0]
+    if "_" in normalized:
+        return normalized.split("_", 1)[0]
+    if "/" in normalized:
+        return normalized.split("/", 1)[0]
+    return normalized
+
+
+def _default_symbol_spec(symbol: str) -> dict[str, Any]:
+    normalized = symbol.upper().strip()
+    if normalized in DEFAULT_SYMBOL_SPECS:
+        return DEFAULT_SYMBOL_SPECS[normalized]
+    base_asset = _extract_base_asset(normalized)
+    return {
+        "base_asset": base_asset,
+        "quote_asset": "USDT",
+        "paradex_market": f"{base_asset}/USD:USDC",
+        "grvt_market": f"{base_asset}_USDT_Perp",
+        "recommended_leverage": 2,
+        "leverage_note": "建议低杠杆，用户可在交易所调整",
+    }
+
+
 def _default_paradex_market(symbol: str) -> str:
-    normalized = symbol.upper()
-    if normalized == "BTC-PERP":
-        return "BTC/USD:USDC"
-    if normalized == "ETH-PERP":
-        return "ETH/USD:USDC"
-    return symbol
+    return str(_default_symbol_spec(symbol)["paradex_market"])
 
 
 def _default_grvt_market(symbol: str) -> str:
-    normalized = symbol.upper()
-    if normalized == "BTC-PERP":
-        return "BTC_USDT_Perp"
-    if normalized == "ETH-PERP":
-        return "ETH_USDT_Perp"
-    return symbol
+    return str(_default_symbol_spec(symbol)["grvt_market"])
 
 
 @dataclass(slots=True)
@@ -86,6 +186,10 @@ class SymbolConfig:
     symbol: str
     paradex_market: str
     grvt_market: str
+    base_asset: str = ""
+    quote_asset: str = "USDT"
+    recommended_leverage: int = 2
+    leverage_note: str = "建议低杠杆，用户可在交易所调整"
     enabled: bool = True
 
 
@@ -170,19 +274,33 @@ class AppConfig:
         if env_path:
             load_dotenv(env_path, override=False)
 
-        symbols = _split_csv(os.getenv("ARB_SYMBOLS"), "BTC-PERP")
+        symbols = _split_csv(os.getenv("ARB_SYMBOLS"), ",".join(DEFAULT_SYMBOL_SPECS.keys()))
         paradex_markets = _split_csv(os.getenv("PARADEX_MARKETS"), "")
         grvt_markets = _split_csv(os.getenv("GRVT_MARKETS"), "")
+        leverage_values = _split_csv(os.getenv("ARB_RECOMMENDED_LEVERAGES"), "")
 
         symbol_cfgs: list[SymbolConfig] = []
         for idx, symbol in enumerate(symbols):
-            para_market = paradex_markets[idx] if idx < len(paradex_markets) else _default_paradex_market(symbol)
-            grvt_market = grvt_markets[idx] if idx < len(grvt_markets) else _default_grvt_market(symbol)
+            spec = _default_symbol_spec(symbol)
+            para_market = paradex_markets[idx] if idx < len(paradex_markets) else str(spec["paradex_market"])
+            grvt_market = grvt_markets[idx] if idx < len(grvt_markets) else str(spec["grvt_market"])
+            base_asset = str(spec["base_asset"])
+            quote_asset = str(spec["quote_asset"])
+            leverage_raw = leverage_values[idx] if idx < len(leverage_values) else str(spec["recommended_leverage"])
+            try:
+                recommended_leverage = max(1, int(leverage_raw))
+            except ValueError:
+                recommended_leverage = int(spec["recommended_leverage"])
+            leverage_note = str(spec["leverage_note"])
             symbol_cfgs.append(
                 SymbolConfig(
                     symbol=symbol,
                     paradex_market=para_market,
                     grvt_market=grvt_market,
+                    base_asset=base_asset,
+                    quote_asset=quote_asset,
+                    recommended_leverage=recommended_leverage,
+                    leverage_note=leverage_note,
                     enabled=True,
                 )
             )
@@ -315,6 +433,10 @@ class AppConfig:
                     "symbol": cfg.symbol,
                     "paradex_market": cfg.paradex_market,
                     "grvt_market": cfg.grvt_market,
+                    "base_asset": cfg.base_asset,
+                    "quote_asset": cfg.quote_asset,
+                    "recommended_leverage": cfg.recommended_leverage,
+                    "leverage_note": cfg.leverage_note,
                 }
                 for cfg in self.symbols
             ],

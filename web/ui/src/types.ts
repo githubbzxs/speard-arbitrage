@@ -56,8 +56,19 @@ export interface RuntimeConfig {
   defaultMode: TradingMode;
 }
 
+export interface SupportedSymbolInfo {
+  symbol: string;
+  paradexMarket: string;
+  grvtMarket: string;
+  baseAsset: string;
+  quoteAsset: string;
+  recommendedLeverage: number;
+  leverageNote: string;
+}
+
 export interface PublicConfig {
   runtime: RuntimeConfig;
+  symbols: SupportedSymbolInfo[];
 }
 
 export interface EventLog {

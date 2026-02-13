@@ -67,6 +67,11 @@
   - Impact：`backend/arbbot/models.py`、`backend/arbbot/strategy/orchestrator.py`、`web/ui/src/types.ts`、`web/ui/src/api/client.ts`、`web/ui/src/App.tsx`、`web/ui/src/utils/format.ts`、`backend/tests/test_symbol_snapshot_prices.py`。
   - Verify：`python -m pytest backend/tests`、`cd web/ui && npm run build`，并确认页面出现 `Paradex Bid/Ask` 与 `GRVT Bid/Ask` 列。
 
+- [2026-02-13] 默认币对扩展到 10 个并透出杠杆信息
+  - Why：需要统一支持 10 个主流币对，并在页面明确币对市场映射与建议杠杆，提升可读性与可运维性。
+  - Impact：`backend/arbbot/config.py`、`.env.example`、`backend/tests/test_runtime_config.py`、`web/ui/src/types.ts`、`web/ui/src/api/client.ts`、`web/ui/src/App.tsx`、`README.md`。
+  - Verify：`python -m pytest backend/tests`、`cd web/ui && npm run build`，并检查页面“支持币对信息”表格显示 10 个币对及建议杠杆。
+
 ## Commands
 - 后端测试：`python -m pytest backend/tests`
 - 后端启动：`python backend/main.py`

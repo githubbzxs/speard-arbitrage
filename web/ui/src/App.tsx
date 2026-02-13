@@ -448,6 +448,7 @@ export default function App() {
   };
 
   const runtimeConfig = publicConfig?.runtime;
+  const supportedSymbols = publicConfig?.symbols ?? [];
   const isSimulatedMarketData = runtimeConfig?.simulatedMarketData ?? runtimeConfig?.dryRun ?? true;
   const isLiveOrderEnabled = runtimeConfig?.liveOrderEnabled ?? false;
   const orderEnableConfirmationText = runtimeConfig?.enableOrderConfirmationText ?? "ENABLE_LIVE_ORDER";
@@ -548,6 +549,47 @@ export default function App() {
               {status.riskCounts.normal}
             </small>
           </article>
+        </div>
+      </section>
+
+      <section className="panel">
+        <div className="panel-title">
+          <h2>支持币对信息</h2>
+          <small>默认支持 {supportedSymbols.length} 个币对，杠杆仅为建议值</small>
+        </div>
+        <div className="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Symbol</th>
+                <th>Base/Quote</th>
+                <th>Paradex 市场</th>
+                <th>GRVT 市场</th>
+                <th>建议杠杆</th>
+                <th>杠杆说明</th>
+              </tr>
+            </thead>
+            <tbody>
+              {supportedSymbols.length === 0 ? (
+                <tr>
+                  <td colSpan={6} className="empty-cell">
+                    暂无币对配置
+                  </td>
+                </tr>
+              ) : (
+                supportedSymbols.map((item) => (
+                  <tr key={`meta-${item.symbol}`}>
+                    <td>{item.symbol}</td>
+                    <td>{item.baseAsset}/{item.quoteAsset}</td>
+                    <td>{item.paradexMarket}</td>
+                    <td>{item.grvtMarket}</td>
+                    <td>{item.recommendedLeverage}x</td>
+                    <td>{item.leverageNote}</td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
         </div>
       </section>
 
