@@ -227,6 +227,11 @@
   - Impact：`web/ui/src/styles.css`。
   - Verify：`cd web/ui && npm run build`，并确认 `/trade` 的指标卡、主区块、操作区与参数区均按单列纵向堆叠。
 
+- [2026-02-13] 交易页改为并排窄版（顶部卡片多列 + 主区左右分栏）
+  - Why：用户反馈单列过长，要求“并排展示、窄一点”。
+  - Impact：`web/ui/src/styles.css`。
+  - Verify：`cd web/ui && npm run build`，并确认 `/trade` 顶部卡片恢复多列、主区恢复左右并排，移动端仍为单列。
+
 ## Commands
 - 后端测试：`python -m pytest backend/tests`
 - 后端启动：`python backend/main.py`
