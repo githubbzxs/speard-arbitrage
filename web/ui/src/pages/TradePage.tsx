@@ -1,15 +1,37 @@
 ﻿import { useCallback, useEffect, useMemo, useState } from "react";
 import type { FormEvent } from "react";
 
-import { apiClient, getErrorMessage } from "../api/client";
+import { apiClient, getErrorMessage, normalizeMarketTopSpreads } from "../api/client";
 import { useDashboard } from "../hooks/useDashboard";
-import type { SymbolParamsPayload, TradeSelection, TradingMode } from "../types";
+import type { MarketTopSpreadRow, MarketTopSpreadsResponse, SymbolParamsPayload, TradeSelection, TradingMode } from "../types";
 import { formatNumber, formatSigned, formatTimestamp } from "../utils/format";
+
+const TOP_LIMIT = 10;
+const MARKET_REFRESH_INTERVAL_MS = 20000;
 
 const EMPTY_TRADE_SELECTION: TradeSelection = {
   selectedSymbol: "",
   top10Candidates: [],
   updatedAt: ""
+};
+
+const EMPTY_MARKET_RESULT: MarketTopSpreadsResponse = {
+  updatedAt: "",
+  scanIntervalSec: 300,
+  limit: TOP_LIMIT,
+  configuredSymbols: 0,
+  comparableSymbols: 0,
+  executableSymbols: 0,
+  scannedSymbols: 0,
+  totalSymbols: 0,
+  skippedCount: 0,
+  skippedReasons: {},
+  feeProfile: {
+    paradexLeg: "taker",
+    grvtLeg: "maker"
+  },
+  lastError: null,
+  rows: []
 };
 
 function parseOptionalNumber(value: string): number | undefined {
@@ -53,15 +75,29 @@ function wsStateClass(state: string): string {
   return "state-muted";
 }
 
-function signalClass(signal: string): string {
-  const normalized = signal.toLowerCase();
-  if (normalized.includes("long")) {
-    return "signal-long";
+function formatSkippedReasons(skippedReasons: Record<string, number>): string {
+  const entries = Object.entries(skippedReasons);
+  if (entries.length === 0) {
+    return "无";
   }
-  if (normalized.includes("short")) {
-    return "signal-short";
+  return entries
+    .sort((a, b) => b[1] - a[1])
+    .map(([reason, count]) => `${reason}(${count})`)
+    .join("，");
+}
+
+function toNominalSpreadPct(row: MarketTopSpreadRow): number {
+  if (!Number.isFinite(row.referenceMid) || row.referenceMid <= 0) {
+    return 0;
   }
-  return "signal-neutral";
+  return (row.grossNominalSpread / row.referenceMid) * 100;
+}
+
+function toNetNominalSpreadPct(row: MarketTopSpreadRow): number {
+  if (!Number.isFinite(row.referenceMid) || row.referenceMid <= 0) {
+    return 0;
+  }
+  return (row.netNominalSpread / row.referenceMid) * 100;
 }
 
 export default function TradePage() {
@@ -92,6 +128,10 @@ export default function TradePage() {
   const [selectionLoading, setSelectionLoading] = useState(false);
   const [selectionSaving, setSelectionSaving] = useState(false);
   const [tradeSelection, setTradeSelection] = useState<TradeSelection>(EMPTY_TRADE_SELECTION);
+  const [marketResult, setMarketResult] = useState<MarketTopSpreadsResponse>(EMPTY_MARKET_RESULT);
+  const [marketLoading, setMarketLoading] = useState(true);
+  const [marketRefreshing, setMarketRefreshing] = useState(false);
+  const [marketError, setMarketError] = useState("");
 
   useEffect(() => {
     setModeDraft(status.mode);
@@ -111,9 +151,48 @@ export default function TradePage() {
     }
   }, []);
 
+  const loadMarketSpreads = useCallback(async (options?: { forceRefresh?: boolean; silent?: boolean }) => {
+    const forceRefresh = options?.forceRefresh ?? false;
+    const silent = options?.silent ?? false;
+
+    if (!silent) {
+      setMarketLoading(true);
+    }
+    if (forceRefresh) {
+      setMarketRefreshing(true);
+    }
+
+    try {
+      const response = await apiClient.getMarketTopSpreads({ limit: TOP_LIMIT, forceRefresh });
+      const normalized = normalizeMarketTopSpreads(response);
+      setMarketResult(normalized);
+      setMarketError("");
+    } catch (error) {
+      setMarketError(`加载行情失败：${getErrorMessage(error)}`);
+    } finally {
+      if (!silent) {
+        setMarketLoading(false);
+      }
+      if (forceRefresh) {
+        setMarketRefreshing(false);
+      }
+    }
+  }, []);
+
   useEffect(() => {
     void loadTradeSelection(false);
   }, [loadTradeSelection]);
+
+  useEffect(() => {
+    void loadMarketSpreads({ forceRefresh: true });
+  }, [loadMarketSpreads]);
+
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      void loadMarketSpreads({ forceRefresh: true, silent: true });
+    }, MARKET_REFRESH_INTERVAL_MS);
+    return () => window.clearInterval(timer);
+  }, [loadMarketSpreads]);
 
   useEffect(() => {
     if (tradeSelection.selectedSymbol) {
@@ -153,10 +232,25 @@ export default function TradePage() {
     () => status.riskCounts.normal + status.riskCounts.warning + status.riskCounts.critical,
     [status.riskCounts.critical, status.riskCounts.normal, status.riskCounts.warning]
   );
-  const allZscoreZero = useMemo(
-    () => symbols.length > 0 && symbols.every((item) => Math.abs(item.zscore) < 1e-9),
-    [symbols]
+
+  const topRows = useMemo(
+    () =>
+      [...marketResult.rows]
+        .filter((row) => row.zscore > 0)
+        .sort((a, b) => b.zscore - a.zscore || toNominalSpreadPct(b) - toNominalSpreadPct(a))
+        .slice(0, TOP_LIMIT),
+    [marketResult.rows]
   );
+
+  const marketSummaryText = useMemo(() => {
+    if (marketLoading) {
+      return "行情加载中...";
+    }
+    if (topRows.length === 0) {
+      return "当前无满足条件的标的（仅展示 Z-score > 0）";
+    }
+    return `仅展示 Z-score > 0，当前 ${topRows.length} 个标的`;
+  }, [marketLoading, topRows.length]);
 
   const onModeSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -184,6 +278,7 @@ export default function TradePage() {
       setSelectionMessage(result.message || `已切换交易标的：${selectedSymbol}`);
       setFormError("");
       await loadTradeSelection(true);
+      await loadMarketSpreads({ forceRefresh: true, silent: true });
       await refresh();
     } catch (error) {
       setFormError(`设置交易标的失败：${getErrorMessage(error)}`);
@@ -249,13 +344,15 @@ export default function TradePage() {
   return (
     <div className="page-grid">
       {errorMessage ? <div className="banner banner-error">{errorMessage}</div> : null}
+      {marketError ? <div className="banner banner-error">{marketError}</div> : null}
       {actionMessage ? <div className="banner banner-success">{actionMessage}</div> : null}
       {selectionMessage ? <div className="banner banner-success">{selectionMessage}</div> : null}
+      {marketResult.lastError ? <div className="banner banner-warning">{marketResult.lastError}</div> : null}
 
       <section className="panel overview-panel">
         <div className="panel-title">
-          <h2>下单页</h2>
-          <small>{loading ? "加载中..." : "实时状态"}</small>
+          <h2>行情/下单页</h2>
+          <small>{loading ? "状态加载中..." : marketSummaryText}</small>
         </div>
         <div className="overview-grid">
           <article className="metric-card">
@@ -302,7 +399,7 @@ export default function TradePage() {
                   disabled={isBusy || selectionSaving || selectionLoading}
                 >
                   {tradeSelection.top10Candidates.length === 0 ? (
-                    <option value="">暂无 Top10 候选（先去行情页刷新）</option>
+                    <option value="">暂无 Top10 候选（先点击刷新 Top10）</option>
                   ) : (
                     tradeSelection.top10Candidates.map((item) => (
                       <option key={item.symbol} value={item.symbol}>
@@ -314,7 +411,10 @@ export default function TradePage() {
                 <button
                   className="btn btn-ghost trade-symbol-btn"
                   type="button"
-                  onClick={() => void loadTradeSelection(true)}
+                  onClick={() => {
+                    void loadTradeSelection(true);
+                    void loadMarketSpreads({ forceRefresh: true, silent: true });
+                  }}
                   disabled={isBusy || selectionSaving || selectionLoading}
                 >
                   {selectionLoading ? "刷新中..." : "刷新 Top10"}
@@ -367,10 +467,13 @@ export default function TradePage() {
           </button>
           <button
             className="btn btn-ghost"
-            onClick={() => void refresh()}
-            disabled={isBusy || selectionSaving || loading}
+            onClick={() => {
+              void refresh();
+              void loadMarketSpreads({ forceRefresh: true, silent: true });
+            }}
+            disabled={isBusy || selectionSaving || loading || marketRefreshing}
           >
-            手动刷新
+            {marketRefreshing ? "刷新中..." : "手动刷新"}
           </button>
         </div>
 
@@ -457,45 +560,54 @@ export default function TradePage() {
 
       <section className="panel symbol-panel page-panel">
         <div className="panel-title">
-          <h2>实时交易对</h2>
-          <small>共 {symbols.length} 个交易对</small>
+          <h2>当前行情（单表）</h2>
+          <small>仅展示 Z-score &gt; 0</small>
         </div>
-        {!isEngineRunning ? <p className="hint">引擎未运行，以下指标为停机态展示（--）。</p> : null}
-        {isEngineRunning && allZscoreZero ? <p className="hint">当前 Z-score 全为 0，通常表示策略仍在预热或盘口暂不可用。</p> : null}
+        <p className="hint">
+          最近刷新 {formatTimestamp(marketResult.updatedAt)}，扫描周期约 {marketResult.scanIntervalSec} 秒，
+          可比 {marketResult.comparableSymbols} 个，可执行 {marketResult.executableSymbols} 个，
+          跳过 {marketResult.skippedCount} 个（{formatSkippedReasons(marketResult.skippedReasons)}）。
+        </p>
         <div className="table-wrap">
-          <table>
+          <table className="responsive-table">
             <thead>
               <tr>
-                <th>Symbol</th>
-                <th>Spread (%)</th>
-                <th>ZScore</th>
-                <th>仓位</th>
-                <th>信号</th>
-                <th>状态</th>
-                <th>更新时间</th>
+                <th>#</th>
+                <th>币对</th>
+                <th>实际价差(%)</th>
+                <th>Z-score</th>
+                <th>有效杠杆</th>
+                <th>名义价差(%)</th>
+                <th>净名义价差(%)</th>
               </tr>
             </thead>
             <tbody>
-              {symbols.length === 0 ? (
+              {topRows.length === 0 ? (
                 <tr>
                   <td colSpan={7} className="empty-cell">
-                    当前没有交易对数据
+                    暂无满足条件的行情数据
                   </td>
                 </tr>
               ) : (
-                symbols.map((item) => (
-                  <tr key={item.symbol}>
-                    <td>{item.symbol}</td>
-                    <td>{isEngineRunning ? `${formatSigned(item.spreadBps / 100, 4)}%` : "--"}</td>
-                    <td>{isEngineRunning ? formatNumber(item.zscore, 3) : "--"}</td>
-                    <td>{isEngineRunning ? formatSigned(item.position, 4) : "--"}</td>
-                    <td>
-                      <span className={`tag ${signalClass(isEngineRunning ? item.signal : "neutral")}`}>
-                        {isEngineRunning ? item.signal : "--"}
-                      </span>
+                topRows.map((row, index) => (
+                  <tr key={row.symbol}>
+                    <td data-label="排名">{index + 1}</td>
+                    <td data-label="币对">{row.symbol}</td>
+                    <td data-label="实际价差(%)">
+                      <strong>{formatSigned(row.tradableEdgePct, 4)}%</strong>
                     </td>
-                    <td>{isEngineRunning ? item.status : "stopped"}</td>
-                    <td>{formatTimestamp(item.updatedAt)}</td>
+                    <td data-label="Z-score">
+                      <strong>{formatNumber(row.zscore, 3)}</strong>
+                    </td>
+                    <td data-label="有效杠杆">
+                      <strong>{formatNumber(row.effectiveLeverage, 2)}x</strong>
+                    </td>
+                    <td data-label="名义价差(%)">
+                      <strong>{formatSigned(toNominalSpreadPct(row), 4)}%</strong>
+                    </td>
+                    <td data-label="净名义价差(%)">
+                      <strong>{formatSigned(toNetNominalSpreadPct(row), 4)}%</strong>
+                    </td>
                   </tr>
                 ))
               )}

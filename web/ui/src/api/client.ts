@@ -569,7 +569,8 @@ export function normalizeMarketTopSpreads(data: unknown): MarketTopSpreadsRespon
   const rows = extractArray(record.rows)
     .map((item) => normalizeMarketSpreadRow(item))
     .filter((item): item is MarketTopSpreadRow => item !== null)
-    .sort((a, b) => Math.abs(b.zscore) - Math.abs(a.zscore) || b.grossNominalSpread - a.grossNominalSpread);
+    .filter((item) => item.zscore > 0)
+    .sort((a, b) => b.zscore - a.zscore || b.grossNominalSpread - a.grossNominalSpread);
 
   const skippedReasonsRecord = toRecord(record.skipped_reasons) ?? toRecord(record.skippedReasons) ?? {};
   const normalizedSkippedReasons: Record<string, number> = {};
@@ -647,7 +648,9 @@ export function normalizeTradeSelection(data: unknown): TradeSelection {
 
   const top10Candidates = extractArray(record.top10_candidates ?? record.top10Candidates)
     .map((item) => normalizeTradeTopCandidate(item))
-    .filter((item): item is TradeTopCandidate => item !== null);
+    .filter((item): item is TradeTopCandidate => item !== null)
+    .filter((item) => item.zscore > 0)
+    .sort((a, b) => b.zscore - a.zscore || b.tradableEdgePct - a.tradableEdgePct);
 
   return {
     selectedSymbol: pickString(record, ["selected_symbol", "selectedSymbol"], ""),

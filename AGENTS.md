@@ -182,6 +182,16 @@
   - Impact：`web/ui/src/pages/TradePage.tsx`、`web/ui/src/styles.css`。
   - Verify：`cd web/ui && npm run build`，并确认未完成“应用交易标的”时启动按钮禁用且有明确提示。
 
+- [2026-02-13] Top 展示口径改为仅保留 `Z-score > 0`
+  - Why：按用户要求屏蔽负向 Z-score 标的，避免进入展示与下单候选。
+  - Impact：`backend/arbbot/market/scanner.py`、`backend/tests/test_market_scanner_zscore.py`、`web/ui/src/api/client.ts`。
+  - Verify：`python -m pytest backend/tests`，并确认 `/api/market/top-spreads` 与下单候选不再包含 `zscore <= 0`。
+
+- [2026-02-13] 行情页与下单页合并为单页面，统一使用一个行情表
+  - Why：按用户要求简化操作路径，减少跨页切换成本。
+  - Impact：`web/ui/src/App.tsx`、`web/ui/src/pages/TradePage.tsx`、`web/ui/src/styles.css`。
+  - Verify：`cd web/ui && npm run build`，并确认导航仅保留“行情/下单页面 + API 配置页面”，且单页包含下单操作与唯一行情表格。
+
 ## Commands
 - 后端测试：`python -m pytest backend/tests`
 - 后端启动：`python backend/main.py`

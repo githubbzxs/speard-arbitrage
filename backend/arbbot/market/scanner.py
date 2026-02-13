@@ -263,8 +263,13 @@ class NominalSpreadScanner:
         resolved_limit = max(1, min(int(limit), MAX_TOP_LIMIT))
         await self._ensure_cache(force_refresh=force_refresh)
 
+        # 按需求仅展示 Z-score 为正的标的，避免负值信号进入候选列表。
+        positive_rows = [
+            item for item in self._rows if float(item.get("zscore", 0.0)) > 0.0
+        ]
+
         sorted_rows = sorted(
-            self._rows,
+            positive_rows,
             key=lambda item: (
                 abs(float(item.get("zscore", 0.0))),
                 float(item.get("gross_nominal_spread", 0.0)),

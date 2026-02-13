@@ -53,7 +53,8 @@ async def test_get_top_spreads_sorted_by_abs_zscore(tmp_path: Path) -> None:
 
     payload = await scanner.get_top_spreads(limit=3)
     symbols = [item["symbol"] for item in payload["rows"]]
-    assert symbols == ["BBB-PERP", "CCC-PERP", "AAA-PERP"]
+    assert symbols == ["CCC-PERP", "AAA-PERP"]
+    assert payload["executable_symbols"] == 2
 
 
 def test_compute_zscore_reads_history_from_repository(tmp_path: Path) -> None:
