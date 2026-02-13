@@ -222,6 +222,11 @@
   - Impact：`web/ui/src/styles.css`。
   - Verify：`cd web/ui && npm run build`，并确认 `/trade` 顶部指标卡在桌面端为 4 列、表格行高与控制区高度明显下降。
 
+- [2026-02-13] 交易页布局改为全竖向单列
+  - Why：用户明确要求“全部竖着来”，减少横向分栏与多列栅格。
+  - Impact：`web/ui/src/styles.css`。
+  - Verify：`cd web/ui && npm run build`，并确认 `/trade` 的指标卡、主区块、操作区与参数区均按单列纵向堆叠。
+
 ## Commands
 - 后端测试：`python -m pytest backend/tests`
 - 后端启动：`python backend/main.py`

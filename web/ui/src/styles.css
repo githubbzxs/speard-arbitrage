@@ -390,7 +390,7 @@ body {
 }
 
 .trade-page-grid .dashboard-grid {
-  grid-template-columns: minmax(0, 2.05fr) minmax(280px, 1fr);
+  grid-template-columns: 1fr;
   gap: 10px;
 }
 
@@ -421,7 +421,7 @@ body {
 }
 
 .trade-page-grid .overview-grid {
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: 1fr;
   gap: 8px;
 }
 
@@ -486,11 +486,11 @@ body {
 }
 
 .trade-page-grid .trade-symbol-select-form {
-  grid-template-columns: minmax(0, 1fr) 108px;
+  grid-template-columns: 1fr;
 }
 
 .trade-page-grid .trade-apply-row {
-  grid-template-columns: 126px minmax(0, 1fr);
+  grid-template-columns: 1fr;
 }
 
 .trade-page-grid select,
@@ -513,9 +513,17 @@ body {
   gap: 6px;
 }
 
+.trade-page-grid .action-row,
+.trade-page-grid .action-row-2,
+.trade-page-grid .action-row-3,
+.trade-page-grid .param-grid,
+.trade-page-grid .inline-form {
+  grid-template-columns: 1fr;
+}
+
 @media (max-width: 1240px) {
   .trade-page-grid .overview-grid {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-template-columns: 1fr;
   }
 }
 
@@ -1073,7 +1081,7 @@ input:focus {
   }
 
   .trade-page-grid .overview-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-columns: 1fr;
     gap: 6px;
   }
 }
