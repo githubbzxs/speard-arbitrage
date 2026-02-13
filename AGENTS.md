@@ -217,6 +217,11 @@
   - Impact：`web/ui/src/pages/TradePage.tsx`、`web/ui/src/styles.css`。
   - Verify：`cd web/ui && npm run build`，并确认 `/trade` 在桌面端显示更紧凑、移动端仍保持单列可读。
 
+- [2026-02-13] 交易页紧凑度再次提升为“肉眼可见”档
+  - Why：上一版紧凑化反馈“不明显”，需在不改结构前提下进一步压缩顶部卡片与表格纵向占用。
+  - Impact：`web/ui/src/styles.css`。
+  - Verify：`cd web/ui && npm run build`，并确认 `/trade` 顶部指标卡在桌面端为 4 列、表格行高与控制区高度明显下降。
+
 ## Commands
 - 后端测试：`python -m pytest backend/tests`
 - 后端启动：`python backend/main.py`
