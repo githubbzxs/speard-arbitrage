@@ -10,6 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
 from ..config import AppConfig
+from ..storage import CredentialsRepository
 from ..strategy.orchestrator import ArbitrageOrchestrator
 
 
@@ -23,12 +24,32 @@ class ActionResponse(BaseModel):
     data: dict[str, Any] | None = None
 
 
+class ParadexCredentialsPayload(BaseModel):
+    api_key: str | None = None
+    api_secret: str | None = None
+    passphrase: str | None = None
+
+
+class GrvtCredentialsPayload(BaseModel):
+    api_key: str | None = None
+    api_secret: str | None = None
+    private_key: str | None = None
+    trading_account_id: str | None = None
+
+
+class CredentialsPayload(BaseModel):
+    paradex: ParadexCredentialsPayload | None = None
+    grvt: GrvtCredentialsPayload | None = None
+
+
 def create_app(config: AppConfig) -> FastAPI:
     """创建 API 应用。"""
     orchestrator = ArbitrageOrchestrator(config)
+    credentials_repository = CredentialsRepository(config.storage.sqlite_path)
 
     app = FastAPI(title="跨所价差套利", version="1.0.0")
     app.state.orchestrator = orchestrator
+    app.state.credentials_repository = credentials_repository
 
     app.add_middleware(
         CORSMiddleware,
@@ -45,7 +66,10 @@ def create_app(config: AppConfig) -> FastAPI:
 
     @app.on_event("shutdown")
     async def on_shutdown() -> None:
-        await orchestrator.shutdown()
+        try:
+            await orchestrator.shutdown()
+        finally:
+            credentials_repository.close()
 
     @app.get("/api/status")
     async def get_status() -> dict[str, Any]:
@@ -62,6 +86,23 @@ def create_app(config: AppConfig) -> FastAPI:
     @app.get("/api/config")
     async def get_config() -> dict[str, Any]:
         return config.to_public_dict()
+
+    @app.get("/api/credentials/status", response_model=ActionResponse)
+    async def get_credentials_status() -> ActionResponse:
+        return ActionResponse(
+            ok=True,
+            message="凭证状态获取成功",
+            data=credentials_repository.get_status(),
+        )
+
+    @app.post("/api/credentials", response_model=ActionResponse)
+    async def save_credentials(payload: CredentialsPayload) -> ActionResponse:
+        credentials_repository.save_credentials(payload.model_dump(exclude_none=True))
+        return ActionResponse(
+            ok=True,
+            message="凭证已保存，重启引擎后生效",
+            data=credentials_repository.get_status(),
+        )
 
     @app.post("/api/engine/start", response_model=ActionResponse)
     async def start_engine() -> ActionResponse:
