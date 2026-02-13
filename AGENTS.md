@@ -232,6 +232,11 @@
   - Impact：`web/ui/src/styles.css`。
   - Verify：`cd web/ui && npm run build`，并确认 `/trade` 顶部卡片恢复多列、主区恢复左右并排，移动端仍为单列。
 
+- [2026-02-13] 主内容区回调为竖排（行情表在上、策略控制在下）
+  - Why：用户明确要求“这两个要竖着”，指“当前行情(单表)”与“策略控制”不要左右并排。
+  - Impact：`web/ui/src/styles.css`。
+  - Verify：`cd web/ui && npm run build`，并确认 `/trade` 中“当前行情(单表)”与“策略控制”上下堆叠显示。
+
 ## Commands
 - 后端测试：`python -m pytest backend/tests`
 - 后端启动：`python backend/main.py`
