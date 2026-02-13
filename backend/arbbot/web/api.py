@@ -65,6 +65,22 @@ def create_app(config: AppConfig) -> FastAPI:
     credentials_validator = CredentialsValidator(config)
     market_scanner = NominalSpreadScanner(config=config)
 
+    def hydrate_runtime_credentials_from_saved() -> None:
+        """将已保存凭证同步到运行时配置，供行情扫描等只读场景使用。"""
+        saved = credentials_repository.get_effective_credentials()
+        paradex_saved = saved.get("paradex") if isinstance(saved.get("paradex"), dict) else {}
+        grvt_saved = saved.get("grvt") if isinstance(saved.get("grvt"), dict) else {}
+
+        for field in ("api_key", "api_secret", "passphrase"):
+            value = str(paradex_saved.get(field, "")).strip()
+            if value:
+                setattr(config.paradex.credentials, field, value)
+
+        for field in ("api_key", "api_secret", "private_key", "trading_account_id"):
+            value = str(grvt_saved.get(field, "")).strip()
+            if value:
+                setattr(config.grvt.credentials, field, value)
+
     app = FastAPI(title="跨所价差套利", version="1.0.0")
     app.state.orchestrator = orchestrator
     app.state.credentials_repository = credentials_repository
@@ -112,6 +128,7 @@ def create_app(config: AppConfig) -> FastAPI:
         limit: int = 10,
         force_refresh: bool = False,
     ) -> dict[str, Any]:
+        hydrate_runtime_credentials_from_saved()
         return await market_scanner.get_top_spreads(
             limit=limit,
             force_refresh=force_refresh,
