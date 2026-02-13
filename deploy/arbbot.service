@@ -1,0 +1,20 @@
+[Unit]
+Description=Spread Arbitrage Backend Service
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=www-data
+Group=www-data
+WorkingDirectory=/opt/spread-arbitrage
+EnvironmentFile=/etc/default/arbbot
+# 如使用虚拟环境，请改为对应 python 绝对路径
+ExecStart=/usr/bin/python3 backend/main.py
+Restart=always
+RestartSec=3
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

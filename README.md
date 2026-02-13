@@ -76,6 +76,149 @@ npm run dev
 
 前端默认：`http://localhost:5173`
 
+## 线上部署（Linux + Nginx）
+
+以下示例以单机部署为目标，假设项目目录为 `/opt/spread-arbitrage`，并使用 `systemd + nginx`。
+
+### 1) 安装依赖并准备项目
+
+```bash
+cd /opt
+git clone <your_repo_url> spread-arbitrage
+cd /opt/spread-arbitrage
+
+python3 -m venv .venv
+source .venv/bin/activate
+pip install --upgrade pip
+pip install -r requirements.txt
+
+cp .env.example .env
+# 编辑 .env，填入交易所 API 参数等配置
+```
+
+### 2) 构建前端静态文件
+
+```bash
+cd /opt/spread-arbitrage/web/ui
+npm ci
+npm run build
+```
+
+构建结果目录：`/opt/spread-arbitrage/web/ui/dist`
+
+### 3) 配置并启动后端（systemd）
+
+复制服务模板：
+
+```bash
+sudo cp /opt/spread-arbitrage/deploy/arbbot.service /etc/systemd/system/arbbot.service
+```
+
+创建环境变量文件（`EnvironmentFile`）：
+
+```bash
+sudo tee /etc/default/arbbot > /dev/null <<'EOF'
+ARB_WEB_HOST=127.0.0.1
+ARB_WEB_PORT=8000
+ARB_WEB_LOG_LEVEL=info
+PYTHONUNBUFFERED=1
+EOF
+```
+
+启动服务：
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable --now arbbot
+sudo systemctl status arbbot --no-pager
+```
+
+说明：若你使用虚拟环境，请把 `/etc/systemd/system/arbbot.service` 里的 `ExecStart` 改成虚拟环境 python 的绝对路径（例如 `/opt/spread-arbitrage/.venv/bin/python`）。
+
+### 4) 配置并重载 Nginx
+
+```bash
+sudo cp /opt/spread-arbitrage/deploy/nginx.conf /etc/nginx/sites-available/arbbot.conf
+sudo ln -sf /etc/nginx/sites-available/arbbot.conf /etc/nginx/sites-enabled/arbbot.conf
+sudo rm -f /etc/nginx/sites-enabled/default
+
+sudo nginx -t
+sudo systemctl reload nginx
+```
+
+`deploy/nginx.conf` 已包含：
+
+- 前端静态站点（`/`）
+- 同域 API 反代（`/api/ -> 127.0.0.1:8000`）
+- 同域 WebSocket 反代（`/ws/ -> 127.0.0.1:8000`）
+
+### 5) 验证接口与页面连通性
+
+```bash
+# 后端直连
+curl -i http://127.0.0.1:8000/api/status
+
+# 经过 Nginx 反代
+curl -i http://127.0.0.1/api/status
+
+# 前端首页
+curl -I http://127.0.0.1/
+```
+
+可选：验证 WebSocket（安装 `websocat` 后）：
+
+```bash
+websocat ws://127.0.0.1/ws/stream
+```
+
+### 6) 重部署（更新代码后）
+
+```bash
+cd /opt/spread-arbitrage
+git pull
+
+source .venv/bin/activate
+pip install -r requirements.txt
+
+cd /opt/spread-arbitrage/web/ui
+npm ci
+npm run build
+
+sudo systemctl restart arbbot
+sudo nginx -t && sudo systemctl reload nginx
+curl -fsS http://127.0.0.1/api/status
+```
+
+### 前端环境变量（可选）
+
+- `VITE_API_BASE_URL`：前端请求 API 的基地址。留空时默认走同域路径（例如 `/api/status`）。
+- `VITE_WS_URL`：前端 WebSocket 地址。留空时自动推导为同域 `ws(s)://<host>/ws/stream`。
+
+如果你需要跨域部署前后端，可在 `web/ui/.env.production` 配置后重新构建：
+
+```bash
+cat > /opt/spread-arbitrage/web/ui/.env.production <<'EOF'
+VITE_API_BASE_URL=https://your-domain.example
+VITE_WS_URL=wss://your-domain.example/ws/stream
+EOF
+```
+
+### 故障排查（例如 `/api/status Failed to fetch`）
+
+1. 检查后端服务是否正常：
+   `sudo systemctl status arbbot --no-pager`  
+   `sudo journalctl -u arbbot -n 200 --no-pager`
+2. 检查后端监听地址与端口：
+   `sudo ss -lntp | grep 8000`  
+   确认监听值与 `/etc/default/arbbot` 中 `ARB_WEB_HOST/ARB_WEB_PORT` 一致。
+3. 检查 Nginx 配置与日志：
+   `sudo nginx -t`  
+   `sudo tail -n 200 /var/log/nginx/error.log`
+4. 检查前端构建环境变量：
+   如果设置了 `VITE_API_BASE_URL` 或 `VITE_WS_URL`，确认地址可达且协议匹配（HTTPS 页面必须使用 `wss://`）。
+5. 做最小链路验证：
+   先保证 `curl http://127.0.0.1:8000/api/status` 正常，再检查 `curl http://127.0.0.1/api/status`。
+
 ## API 约定
 
 - `GET /api/status`
