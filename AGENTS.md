@@ -7,6 +7,11 @@
 - 数据存储：SQLite + CSV。
 
 ## Decisions
+- [2026-02-13] 套利口径统一为 Paradex taker + GRVT maker
+  - Why：对齐目标执行模型（Paradex 吃单、GRVT 挂单），避免扫描口径与实际执行不一致。
+  - Impact：`backend/arbbot/strategy/execution_engine.py`、`backend/arbbot/strategy/orchestrator.py`、`backend/arbbot/market/scanner.py`、`backend/tests/test_execution_engine_order_gate.py`、`web/ui/src/api/client.ts`、`web/ui/src/pages/MarketPage.tsx`。
+  - Verify：`python -m pytest backend/tests`、`cd web/ui && npm run build`。
+
 - [2026-02-13] 开仓主腿改为 Paradex taker，取消 Paradex post-only maker
   - Why：Paradex 侧为 0 手续费时，优先吃单可提高成交确定性与刷量效率，避免 maker 挂单不成交导致机会流失。
   - Impact：`backend/arbbot/strategy/execution_engine.py`、`backend/tests/test_execution_engine_order_gate.py`。

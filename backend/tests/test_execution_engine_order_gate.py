@@ -90,6 +90,8 @@ async def test_execute_signal_blocked_when_live_order_disabled() -> None:
         signal=signal,
         paradex_bid=Decimal("100"),
         paradex_ask=Decimal("100.1"),
+        grvt_bid=Decimal("100"),
+        grvt_ask=Decimal("100.1"),
         can_open=True,
     )
 
@@ -136,6 +138,8 @@ async def test_open_signal_uses_paradex_taker_then_grvt_hedge() -> None:
         signal=signal,
         paradex_bid=Decimal("100"),
         paradex_ask=Decimal("100.1"),
+        grvt_bid=Decimal("99.9"),
+        grvt_ask=Decimal("100.2"),
         can_open=True,
     )
 
@@ -148,5 +152,8 @@ async def test_open_signal_uses_paradex_taker_then_grvt_hedge() -> None:
         grvt_request = grvt.requests[index]
         assert paradex_request.order_type == "market"
         assert paradex_request.post_only is False
-        assert grvt_request.order_type == "market"
+        assert grvt_request.order_type == "limit"
+        assert grvt_request.post_only is True
+        expected_grvt_price = Decimal("99.9") if grvt_request.side.value == "buy" else Decimal("100.2")
+        assert grvt_request.price == expected_grvt_price
         assert grvt_request.quantity == paradex_request.quantity

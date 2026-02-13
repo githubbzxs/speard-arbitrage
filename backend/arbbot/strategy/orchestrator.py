@@ -296,6 +296,8 @@ class ArbitrageOrchestrator:
                     signal=signal,
                     paradex_bid=paradex_eff.bid if paradex_eff else Decimal("0"),
                     paradex_ask=paradex_eff.ask if paradex_eff else Decimal("0"),
+                    grvt_bid=grvt_eff.bid if grvt_eff else Decimal("0"),
+                    grvt_ask=grvt_eff.ask if grvt_eff else Decimal("0"),
                     can_open=can_open,
                 )
                 if report.attempted_orders > 0:

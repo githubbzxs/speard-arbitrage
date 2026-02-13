@@ -17,7 +17,7 @@ const EMPTY_RESULT: MarketTopSpreadsResponse = {
   skippedReasons: {},
   feeProfile: {
     paradexLeg: "taker",
-    grvtLeg: "taker"
+    grvtLeg: "maker"
   },
   lastError: null,
   rows: []
@@ -126,7 +126,7 @@ export default function MarketPage() {
         </div>
 
         <p className="hint">
-          计算口径：实际价差 = max(Paradex 买一 - GRVT 卖一, GRVT 买一 - Paradex 卖一)；
+          计算口径：实际价差 = max(Paradex 买一 - GRVT 买一, GRVT 卖一 - Paradex 卖一)；
           名义价差 = 实际价差 × min(Paradex 最大杠杆, GRVT 最大杠杆)。
         </p>
         <p className="hint">

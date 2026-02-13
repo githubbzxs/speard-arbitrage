@@ -605,7 +605,7 @@ export function normalizeMarketTopSpreads(data: unknown): MarketTopSpreadsRespon
     skippedReasons: {},
     feeProfile: {
       paradexLeg: "taker",
-      grvtLeg: "taker"
+      grvtLeg: "maker"
     },
     lastError: null,
     rows: []
@@ -636,7 +636,7 @@ export function normalizeMarketTopSpreads(data: unknown): MarketTopSpreadsRespon
   }
   const feeProfileRecord = toRecord(record.fee_profile) ?? toRecord(record.feeProfile);
   const paradexLegRaw = pickString(feeProfileRecord ?? {}, ["paradex_leg", "paradexLeg"], "taker");
-  const grvtLegRaw = pickString(feeProfileRecord ?? {}, ["grvt_leg", "grvtLeg"], "taker");
+  const grvtLegRaw = pickString(feeProfileRecord ?? {}, ["grvt_leg", "grvtLeg"], "maker");
   const lastErrorRaw = record.last_error ?? record.lastError;
 
   return {
@@ -649,7 +649,7 @@ export function normalizeMarketTopSpreads(data: unknown): MarketTopSpreadsRespon
     skippedReasons: normalizedSkippedReasons,
     feeProfile: {
       paradexLeg: paradexLegRaw === "taker" ? "taker" : "taker",
-      grvtLeg: grvtLegRaw === "maker" ? "maker" : "taker"
+      grvtLeg: grvtLegRaw === "taker" ? "taker" : "maker"
     },
     lastError: typeof lastErrorRaw === "string" && lastErrorRaw.trim() ? lastErrorRaw : null,
     rows

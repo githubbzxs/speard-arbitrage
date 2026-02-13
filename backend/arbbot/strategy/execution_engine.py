@@ -47,6 +47,8 @@ class ExecutionEngine:
         signal: SpreadSignal,
         paradex_bid: Decimal,
         paradex_ask: Decimal,
+        grvt_bid: Decimal,
+        grvt_ask: Decimal,
         can_open: bool,
     ) -> ExecutionReport:
         """执行策略信号。"""
@@ -84,7 +86,14 @@ class ExecutionEngine:
             )
 
         if signal.action == SignalAction.OPEN:
-            return await self._open_batches(symbol_cfg, signal, paradex_bid, paradex_ask)
+            return await self._open_batches(
+                symbol_cfg,
+                signal,
+                paradex_bid,
+                paradex_ask,
+                grvt_bid,
+                grvt_ask,
+            )
 
         if signal.action == SignalAction.CLOSE:
             return await self._close_position(symbol_cfg, signal)
@@ -220,6 +229,8 @@ class ExecutionEngine:
         signal: SpreadSignal,
         paradex_bid: Decimal,
         paradex_ask: Decimal,
+        grvt_bid: Decimal,
+        grvt_ask: Decimal,
     ) -> ExecutionReport:
         attempted = 0
         success = 0
@@ -260,12 +271,15 @@ class ExecutionEngine:
             )
 
             hedge_qty = paradex_ack.filled_quantity
+            hedge_maker_price = grvt_bid if hedge_side == TradeSide.BUY else grvt_ask
             hedge_req = OrderRequest(
                 exchange=ExchangeName.GRVT,
                 symbol=symbol_cfg.symbol,
                 side=hedge_side,
                 quantity=hedge_qty,
-                order_type="market",
+                order_type="limit",
+                price=hedge_maker_price,
+                post_only=True,
                 reduce_only=False,
                 tag="open-hedge",
             )
@@ -283,7 +297,7 @@ class ExecutionEngine:
                     symbol=symbol_cfg.symbol,
                     side=hedge_ack.side,
                     quantity=hedge_ack.filled_quantity,
-                    price=hedge_ack.avg_price or fallback_price,
+                    price=hedge_ack.avg_price or hedge_maker_price,
                     order_id=hedge_ack.order_id,
                     tag="open-hedge",
                 )

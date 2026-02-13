@@ -27,6 +27,7 @@ MAX_TOP_LIMIT = 100
 # GRVT: https://help.grvt.io/hc/en-us/articles/10465949828111
 DEFAULT_OFFICIAL_PARADEX_TAKER_FEE = Decimal("0.0002")
 DEFAULT_OFFICIAL_GRVT_TAKER_FEE = Decimal("0.0002")
+DEFAULT_OFFICIAL_GRVT_MAKER_FEE = Decimal("0.0002")
 
 
 def _to_decimal(raw: Any) -> Decimal | None:
@@ -97,6 +98,13 @@ def _extract_grvt_taker_fee(market: dict[str, Any]) -> Decimal | None:
     if taker is None:
         return None
     return taker
+
+
+def _extract_grvt_maker_fee(market: dict[str, Any]) -> Decimal | None:
+    maker = _to_decimal(market.get("maker"))
+    if maker is None:
+        return None
+    return maker
 
 
 def _extract_paradex_top(levels: Any) -> Decimal | None:
@@ -175,7 +183,7 @@ class NominalSpreadScanner:
             "skipped_reasons": self._skipped_reasons,
             "fee_profile": {
                 "paradex_leg": "taker",
-                "grvt_leg": "taker",
+                "grvt_leg": "maker",
             },
             "last_error": self._last_error or None,
             "rows": sorted_rows[:resolved_limit],
@@ -303,17 +311,18 @@ class NominalSpreadScanner:
         grvt_mid = (grvt_bid + grvt_ask) / Decimal("2")
         reference_mid = (paradex_mid + grvt_mid) / Decimal("2")
 
-        edge_sell_paradex_buy_grvt = paradex_bid - grvt_ask
-        edge_sell_grvt_buy_paradex = grvt_bid - paradex_ask
-        tradable_edge_price = max(edge_sell_paradex_buy_grvt, edge_sell_grvt_buy_paradex)
+        # 口径对齐执行引擎：Paradex taker + GRVT maker。
+        edge_sell_paradex_buy_grvt = paradex_bid - grvt_bid
+        edge_buy_paradex_sell_grvt = grvt_ask - paradex_ask
+        tradable_edge_price = max(edge_sell_paradex_buy_grvt, edge_buy_paradex_sell_grvt)
 
         if tradable_edge_price <= 0:
             return None, "edge_not_positive"
 
         direction = (
-            "sell_paradex_taker_buy_grvt_taker"
+            "sell_paradex_taker_buy_grvt_maker"
             if tradable_edge_price == edge_sell_paradex_buy_grvt
-            else "buy_paradex_taker_sell_grvt_taker"
+            else "buy_paradex_taker_sell_grvt_maker"
         )
 
         tradable_edge_bps = Decimal("0")
@@ -325,7 +334,7 @@ class NominalSpreadScanner:
         gross_nominal_spread = tradable_edge_price * Decimal(str(effective_leverage))
 
         paradex_fee_rate, paradex_fee_source = self._resolve_paradex_taker_fee(paradex_info)
-        grvt_fee_rate, grvt_fee_source = self._resolve_grvt_taker_fee(grvt_info)
+        grvt_fee_rate, grvt_fee_source = self._resolve_grvt_maker_fee(grvt_info)
         total_fee_rate = paradex_fee_rate + grvt_fee_rate
 
         # 与名义价差同口径：使用参考中间价 * 有效杠杆作为名义 notional。
@@ -437,6 +446,7 @@ class NominalSpreadScanner:
                 "priority": priority,
                 "max_leverage": leverage_map.get(market_symbol),
                 "taker_fee_rate": _extract_grvt_taker_fee(item),
+                "maker_fee_rate": _extract_grvt_maker_fee(item),
             }
 
         return result
@@ -452,6 +462,12 @@ class NominalSpreadScanner:
         if isinstance(fee, Decimal):
             return fee, "api"
         return DEFAULT_OFFICIAL_GRVT_TAKER_FEE, "official"
+
+    def _resolve_grvt_maker_fee(self, grvt_info: dict[str, Any]) -> tuple[Decimal, str]:
+        fee = grvt_info.get("maker_fee_rate")
+        if isinstance(fee, Decimal):
+            return fee, "api"
+        return DEFAULT_OFFICIAL_GRVT_MAKER_FEE, "official"
 
     def _build_grvt_ccxt_params(self) -> dict[str, str]:
         credentials = self._config.grvt.credentials
