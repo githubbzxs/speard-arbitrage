@@ -578,8 +578,51 @@ tbody tr:hover {
   gap: 8px;
 }
 
-.trade-symbol-inline-form {
-  grid-template-columns: minmax(0, 1fr) 120px 140px;
+.trade-selection-flow {
+  display: grid;
+  gap: 10px;
+}
+
+.trade-step-card {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--panel-secondary);
+  padding: 10px;
+  display: grid;
+  gap: 8px;
+}
+
+.trade-step-title {
+  margin: 0;
+  font-size: 12px;
+  letter-spacing: 0.02em;
+  color: var(--muted);
+  font-weight: 700;
+}
+
+.trade-symbol-select-form {
+  grid-template-columns: minmax(0, 1fr) 120px;
+}
+
+.trade-apply-row {
+  display: grid;
+  grid-template-columns: 140px minmax(0, 1fr);
+  gap: 8px;
+  align-items: center;
+}
+
+.trade-apply-state {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.trade-apply-state-ok {
+  color: var(--success);
+}
+
+.trade-apply-state-warn {
+  color: var(--warning);
 }
 
 .trade-symbol-btn {
@@ -989,7 +1032,8 @@ input:focus {
     grid-template-columns: 1fr;
   }
 
-  .trade-symbol-inline-form {
+  .trade-symbol-select-form,
+  .trade-apply-row {
     grid-template-columns: 1fr;
   }
 

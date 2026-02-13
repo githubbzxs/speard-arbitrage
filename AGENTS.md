@@ -177,6 +177,11 @@
   - Impact：`web/ui/src/pages/TradePage.tsx`、`web/ui/src/styles.css`。
   - Verify：`cd web/ui && npm run build`，并在下单页切换/刷新时确认交易标的操作区不再抖动。
 
+- [2026-02-13] 下单页交易标的改为“分步选择/分步应用”并增加启动前一致性校验
+  - Why：修复“选择和应用挤在一起看不出差异”的可用性问题，避免未应用新选择却按旧标的启动引擎。
+  - Impact：`web/ui/src/pages/TradePage.tsx`、`web/ui/src/styles.css`。
+  - Verify：`cd web/ui && npm run build`，并确认未完成“应用交易标的”时启动按钮禁用且有明确提示。
+
 ## Commands
 - 后端测试：`python -m pytest backend/tests`
 - 后端启动：`python backend/main.py`

@@ -143,6 +143,9 @@ export default function TradePage() {
     () => tradeSelection.top10Candidates.find((item) => item.symbol === selectedSymbol) ?? null,
     [selectedSymbol, tradeSelection.top10Candidates]
   );
+  const hasAppliedTradeSymbol = Boolean(selectedTradeSymbol);
+  const needsApplySelection = Boolean(selectedSymbol) && selectedSymbol !== selectedTradeSymbol;
+  const canStartEngine = hasAppliedTradeSymbol && !needsApplySelection;
 
   const isEngineRunning = status.engineStatus === "running";
 
@@ -288,39 +291,53 @@ export default function TradePage() {
 
         <div className="form-block">
           <label htmlFor="trade-symbol-select">交易标的（仅 Top10 候选）</label>
-          <div className="inline-form trade-symbol-inline-form">
-            <select
-              id="trade-symbol-select"
-              value={selectedSymbol}
-              onChange={(event) => onTradeSymbolChange(event.target.value)}
-              disabled={isBusy || selectionSaving || selectionLoading}
-            >
-              {tradeSelection.top10Candidates.length === 0 ? (
-                <option value="">暂无 Top10 候选（先去行情页刷新）</option>
-              ) : (
-                tradeSelection.top10Candidates.map((item) => (
-                  <option key={item.symbol} value={item.symbol}>
-                    {item.symbol}
-                  </option>
-                ))
-              )}
-            </select>
-            <button
-              className="btn btn-ghost trade-symbol-btn"
-              type="button"
-              onClick={() => void loadTradeSelection(true)}
-              disabled={isBusy || selectionSaving || selectionLoading}
-            >
-              {selectionLoading ? "刷新中..." : "刷新 Top10"}
-            </button>
-            <button
-              className="btn btn-secondary trade-symbol-btn"
-              type="button"
-              onClick={() => void onApplyTradeSymbol()}
-              disabled={isBusy || selectionSaving || selectionLoading || !selectedSymbol}
-            >
-              {selectionSaving ? "应用中..." : "应用交易标的"}
-            </button>
+          <div className="trade-selection-flow">
+            <div className="trade-step-card">
+              <p className="trade-step-title">步骤 1：选择交易标的</p>
+              <div className="inline-form trade-symbol-select-form">
+                <select
+                  id="trade-symbol-select"
+                  value={selectedSymbol}
+                  onChange={(event) => onTradeSymbolChange(event.target.value)}
+                  disabled={isBusy || selectionSaving || selectionLoading}
+                >
+                  {tradeSelection.top10Candidates.length === 0 ? (
+                    <option value="">暂无 Top10 候选（先去行情页刷新）</option>
+                  ) : (
+                    tradeSelection.top10Candidates.map((item) => (
+                      <option key={item.symbol} value={item.symbol}>
+                        {item.symbol}
+                      </option>
+                    ))
+                  )}
+                </select>
+                <button
+                  className="btn btn-ghost trade-symbol-btn"
+                  type="button"
+                  onClick={() => void loadTradeSelection(true)}
+                  disabled={isBusy || selectionSaving || selectionLoading}
+                >
+                  {selectionLoading ? "刷新中..." : "刷新 Top10"}
+                </button>
+              </div>
+            </div>
+
+            <div className="trade-step-card">
+              <p className="trade-step-title">步骤 2：应用到引擎</p>
+              <div className="trade-apply-row">
+                <button
+                  className="btn btn-secondary trade-symbol-btn"
+                  type="button"
+                  onClick={() => void onApplyTradeSymbol()}
+                  disabled={isBusy || selectionSaving || selectionLoading || !selectedSymbol}
+                >
+                  {selectionSaving ? "应用中..." : "应用交易标的"}
+                </button>
+                <p className={`trade-apply-state ${canStartEngine ? "trade-apply-state-ok" : "trade-apply-state-warn"}`}>
+                  {canStartEngine ? "已完成应用，可启动引擎" : "未完成应用，启动引擎会被禁用"}
+                </p>
+              </div>
+            </div>
           </div>
 
           <p className="hint">
@@ -328,7 +345,8 @@ export default function TradePage() {
             {tradeSelection.top10Candidates.length} 个，
             更新时间 {formatTimestamp(tradeSelection.updatedAt)}。
           </p>
-          {!selectedTradeSymbol ? <p className="hint">请先点击“应用交易标的”，然后才能启动引擎。</p> : null}
+          {!selectedTradeSymbol ? <p className="hint">请先完成“步骤 2 应用到引擎”，然后才能启动引擎。</p> : null}
+          {needsApplySelection ? <p className="hint">你已切换交易标的，但还未应用，当前仍按旧标的运行。</p> : null}
           {selectedCandidate ? (
             <p className="hint">
               候选口径：{formatSigned(selectedCandidate.tradableEdgePct, 4)}%，Z-score {formatSigned(selectedCandidate.zscore, 3)}
@@ -340,7 +358,7 @@ export default function TradePage() {
           <button
             className="btn btn-primary"
             onClick={() => void startEngine()}
-            disabled={isBusy || selectionSaving || !tradeSelection.selectedSymbol}
+            disabled={isBusy || selectionSaving || !canStartEngine}
           >
             启动引擎
           </button>
