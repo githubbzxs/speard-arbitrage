@@ -245,6 +245,11 @@ body {
   background: var(--success-soft);
 }
 
+.runtime-pill.runtime-blocked {
+  color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 16%, transparent);
+}
+
 .panel-title {
   display: flex;
   justify-content: space-between;
@@ -466,6 +471,33 @@ tbody tr:hover {
   margin-top: 14px;
   display: grid;
   gap: 10px;
+}
+
+.runtime-section {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 12px;
+  background: var(--panel-secondary);
+}
+
+.runtime-switch-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.runtime-switch-card {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 10px;
+  background: var(--panel-subtle);
+  display: grid;
+  gap: 8px;
+}
+
+.runtime-switch-card h4 {
+  margin: 0;
+  font-size: 14px;
 }
 
 .form-block label {
@@ -717,6 +749,10 @@ input:focus {
   }
 
   .credential-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .runtime-switch-grid {
     grid-template-columns: 1fr;
   }
 }

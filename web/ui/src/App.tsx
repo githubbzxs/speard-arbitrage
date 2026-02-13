@@ -192,6 +192,9 @@ export default function App() {
   const [paradexForm, setParadexForm] = useState<ParadexCredentialsInput>(EMPTY_PARADEX_FORM);
   const [grvtForm, setGrvtForm] = useState<GrvtCredentialsInput>(EMPTY_GRVT_FORM);
   const [visibleFields, setVisibleFields] = useState<Record<string, boolean>>({});
+  const [runtimeUpdating, setRuntimeUpdating] = useState(false);
+  const [runtimeError, setRuntimeError] = useState("");
+  const [runtimeMessage, setRuntimeMessage] = useState("");
 
   useEffect(() => {
     window.localStorage.setItem(THEME_STORAGE_KEY, theme);
@@ -382,6 +385,57 @@ export default function App() {
     }
   };
 
+  const onSwitchMarketData = async (simulatedMarketData: boolean) => {
+    setRuntimeError("");
+    setRuntimeMessage("");
+    setRuntimeUpdating(true);
+
+    try {
+      const result = await apiClient.setMarketDataMode(simulatedMarketData);
+      if (!result.ok) {
+        setRuntimeError(result.message || "切换行情模式失败");
+        return;
+      }
+      setRuntimeMessage(result.message || "行情模式已更新");
+      await loadPublicConfig();
+    } catch (error) {
+      setRuntimeError(`切换行情模式失败：${getErrorMessage(error)}`);
+    } finally {
+      setRuntimeUpdating(false);
+    }
+  };
+
+  const onToggleLiveOrder = async (enabled: boolean, confirmationText: string) => {
+    setRuntimeError("");
+    setRuntimeMessage("");
+
+    if (enabled) {
+      const typed = window.prompt(`请输入确认口令以开启真实下单：${confirmationText}`, "");
+      if (typed === null) {
+        return;
+      }
+      if (typed.trim() !== confirmationText) {
+        setRuntimeError("确认口令不匹配，已取消开启真实下单");
+        return;
+      }
+    }
+
+    setRuntimeUpdating(true);
+    try {
+      const result = await apiClient.setOrderExecution(enabled, enabled ? confirmationText : "");
+      if (!result.ok) {
+        setRuntimeError(result.message || "更新下单开关失败");
+        return;
+      }
+      setRuntimeMessage(result.message || "下单开关已更新");
+      await loadPublicConfig();
+    } catch (error) {
+      setRuntimeError(`更新下单开关失败：${getErrorMessage(error)}`);
+    } finally {
+      setRuntimeUpdating(false);
+    }
+  };
+
   const toggleFieldVisibility = (fieldKey: string) => {
     setVisibleFields((previous) => ({
       ...previous,
@@ -393,7 +447,18 @@ export default function App() {
     setTheme((previous) => (previous === "dark" ? "light" : "dark"));
   };
 
-  const isDryRun = publicConfig?.runtime.dryRun ?? true;
+  const runtimeConfig = publicConfig?.runtime;
+  const isSimulatedMarketData = runtimeConfig?.simulatedMarketData ?? runtimeConfig?.dryRun ?? true;
+  const isLiveOrderEnabled = runtimeConfig?.liveOrderEnabled ?? false;
+  const orderEnableConfirmationText = runtimeConfig?.enableOrderConfirmationText ?? "ENABLE_LIVE_ORDER";
+  const canToggleMarketMode = !runtimeUpdating && !publicConfigLoading && status.engineStatus === "stopped";
+  const canEnableLiveOrder =
+    !runtimeUpdating &&
+    !publicConfigLoading &&
+    !isLiveOrderEnabled &&
+    !isSimulatedMarketData &&
+    status.engineStatus === "stopped";
+  const canDisableLiveOrder = !runtimeUpdating && !publicConfigLoading && isLiveOrderEnabled;
 
   return (
     <div className="app-shell">
@@ -403,8 +468,11 @@ export default function App() {
           <h1>前端控制台</h1>
           <p className="subtitle">
             实时观察引擎、风险与交易对状态
-            <span className={`runtime-pill ${isDryRun ? "runtime-dry" : "runtime-live"}`}>
-              {publicConfigLoading ? "加载中" : isDryRun ? "DRY-RUN" : "LIVE"}
+            <span className={`runtime-pill ${isSimulatedMarketData ? "runtime-dry" : "runtime-live"}`}>
+              {publicConfigLoading ? "加载中" : isSimulatedMarketData ? "SIM-MARKET" : "REAL-MARKET"}
+            </span>
+            <span className={`runtime-pill ${isLiveOrderEnabled ? "runtime-live" : "runtime-blocked"}`}>
+              {publicConfigLoading ? "加载中" : isLiveOrderEnabled ? "ORDER-LIVE" : "ORDER-BLOCKED"}
             </span>
           </p>
         </div>
@@ -443,9 +511,16 @@ export default function App() {
       {errorMessage ? <div className="banner banner-error">{errorMessage}</div> : null}
       {actionMessage ? <div className="banner banner-success">{actionMessage}</div> : null}
       {publicConfigError ? <div className="banner banner-error">{publicConfigError}</div> : null}
-      {!publicConfigLoading && isDryRun ? (
+      {runtimeError ? <div className="banner banner-error">{runtimeError}</div> : null}
+      {runtimeMessage ? <div className="banner banner-success">{runtimeMessage}</div> : null}
+      {!publicConfigLoading && isSimulatedMarketData ? (
         <div className="banner banner-warning">
-          当前为 dry-run（模拟行情）模式，价差与仓位变化可能剧烈抖动，且不会真实下单。
+          当前为模拟行情模式，数据仅用于联调验证，请勿据此判断真实可执行收益。
+        </div>
+      ) : null}
+      {!publicConfigLoading && !isSimulatedMarketData && !isLiveOrderEnabled ? (
+        <div className="banner banner-warning">
+          当前为真实行情，但已禁用真实下单。你可以先观察信号与风控，再在控制面板手动开启下单。
         </div>
       ) : null}
 
@@ -537,6 +612,57 @@ export default function App() {
             <button className="btn btn-danger" onClick={() => void stopEngine()} disabled={isBusy}>
               停止引擎
             </button>
+          </div>
+
+          <div className="form-block runtime-section">
+            <label>运行时开关</label>
+            <div className="runtime-switch-grid">
+              <article className="runtime-switch-card">
+                <h4>行情来源</h4>
+                <p className="hint">切换行情模式前需先停止引擎。</p>
+                <div className="action-row">
+                  <button
+                    className="btn btn-secondary"
+                    type="button"
+                    onClick={() => void onSwitchMarketData(true)}
+                    disabled={!canToggleMarketMode || isSimulatedMarketData}
+                  >
+                    模拟行情
+                  </button>
+                  <button
+                    className="btn btn-secondary"
+                    type="button"
+                    onClick={() => void onSwitchMarketData(false)}
+                    disabled={!canToggleMarketMode || !isSimulatedMarketData}
+                  >
+                    真实行情
+                  </button>
+                </div>
+              </article>
+
+              <article className="runtime-switch-card">
+                <h4>真实下单</h4>
+                <p className="hint">开启需要输入确认口令，运行中仅允许关闭下单。</p>
+                <div className="action-row">
+                  <button
+                    className="btn btn-danger"
+                    type="button"
+                    onClick={() => void onToggleLiveOrder(true, orderEnableConfirmationText)}
+                    disabled={!canEnableLiveOrder}
+                  >
+                    开启下单
+                  </button>
+                  <button
+                    className="btn btn-secondary"
+                    type="button"
+                    onClick={() => void onToggleLiveOrder(false, orderEnableConfirmationText)}
+                    disabled={!canDisableLiveOrder}
+                  >
+                    关闭下单
+                  </button>
+                </div>
+              </article>
+            </div>
           </div>
 
           <form className="form-block" onSubmit={onModeSubmit}>

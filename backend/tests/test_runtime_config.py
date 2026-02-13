@@ -1,0 +1,38 @@
+from __future__ import annotations
+
+from arbbot.config import AppConfig
+
+
+def test_runtime_config_compat_with_dry_run_true(monkeypatch) -> None:
+    monkeypatch.setenv("ARB_DRY_RUN", "true")
+    monkeypatch.delenv("ARB_SIMULATED_MARKET_DATA", raising=False)
+    monkeypatch.delenv("ARB_LIVE_ORDER_ENABLED", raising=False)
+
+    config = AppConfig.from_env(env_path=None)
+
+    assert config.runtime.simulated_market_data is True
+    assert config.runtime.live_order_enabled is False
+
+
+def test_runtime_config_compat_with_dry_run_false(monkeypatch) -> None:
+    monkeypatch.setenv("ARB_DRY_RUN", "false")
+    monkeypatch.delenv("ARB_SIMULATED_MARKET_DATA", raising=False)
+    monkeypatch.delenv("ARB_LIVE_ORDER_ENABLED", raising=False)
+
+    config = AppConfig.from_env(env_path=None)
+
+    assert config.runtime.simulated_market_data is False
+    assert config.runtime.live_order_enabled is True
+
+
+def test_runtime_config_new_flags_override_dry_run(monkeypatch) -> None:
+    monkeypatch.setenv("ARB_DRY_RUN", "true")
+    monkeypatch.setenv("ARB_SIMULATED_MARKET_DATA", "false")
+    monkeypatch.setenv("ARB_LIVE_ORDER_ENABLED", "true")
+    monkeypatch.setenv("ARB_ENABLE_LIVE_ORDER_CONFIRM_TEXT", "CONFIRM-LIVE")
+
+    config = AppConfig.from_env(env_path=None)
+
+    assert config.runtime.simulated_market_data is False
+    assert config.runtime.live_order_enabled is True
+    assert config.runtime.enable_order_confirmation_text == "CONFIRM-LIVE"

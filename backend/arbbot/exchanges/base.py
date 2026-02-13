@@ -16,9 +16,11 @@ OrderUpdateCallback = Callable[[OrderAck], Awaitable[None]]
 class BaseExchangeAdapter(abc.ABC):
     """统一交易所适配器抽象。"""
 
-    def __init__(self, name: ExchangeName, dry_run: bool) -> None:
+    def __init__(self, name: ExchangeName, simulate_market_data: bool) -> None:
         self.name = name
-        self.dry_run = dry_run
+        self.simulate_market_data = simulate_market_data
+        # 向后兼容历史字段，避免下游模块引用崩溃。
+        self.dry_run = simulate_market_data
         self._orderbook_callback: OrderbookCallback | None = None
         self._order_update_callback: OrderUpdateCallback | None = None
 

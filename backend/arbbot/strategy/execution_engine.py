@@ -29,11 +29,17 @@ class ExecutionEngine:
         rate_limiter: RateLimiter,
         position_manager: PositionManager,
         strategy_cfg: StrategyConfig,
+        live_order_enabled: bool,
     ) -> None:
         self.adapters = adapters
         self.rate_limiter = rate_limiter
         self.position_manager = position_manager
         self.strategy_cfg = strategy_cfg
+        self.live_order_enabled = live_order_enabled
+
+    def set_live_order_enabled(self, enabled: bool) -> None:
+        """动态切换真实下单开关。"""
+        self.live_order_enabled = enabled
 
     async def execute_signal(
         self,
@@ -44,6 +50,9 @@ class ExecutionEngine:
         can_open: bool,
     ) -> ExecutionReport:
         """执行策略信号。"""
+        if signal.action in {SignalAction.OPEN, SignalAction.CLOSE} and not self.live_order_enabled:
+            return self._order_blocked_report(signal, "真实下单已禁用，仅执行行情监控")
+
         if signal.action == SignalAction.HOLD:
             return ExecutionReport(
                 signal=signal,
@@ -99,6 +108,9 @@ class ExecutionEngine:
             reason="仓位再平衡",
             batches=[x.quantity for x in orders],
         )
+        if not self.live_order_enabled:
+            return self._order_blocked_report(fake_signal, "真实下单已禁用，再平衡仅记录未执行")
+
         attempted = 0
         success = 0
         failed = 0
@@ -135,6 +147,18 @@ class ExecutionEngine:
 
     async def flatten_symbol(self, symbol_cfg: SymbolConfig) -> ExecutionReport:
         """强制将标的双边仓位降为 0。"""
+        if not self.live_order_enabled:
+            blocked_signal = SpreadSignal(
+                action=SignalAction.REBALANCE,
+                direction=None,
+                edge_bps=Decimal("0"),
+                zscore=Decimal("0"),
+                threshold_bps=Decimal("0"),
+                reason="真实下单已禁用",
+                batches=[],
+            )
+            return self._order_blocked_report(blocked_signal, "真实下单已禁用，一键平仓未执行")
+
         state = self.position_manager.get_state(symbol_cfg.symbol)
         requests: list[OrderRequest] = []
 
@@ -357,3 +381,14 @@ class ExecutionEngine:
             ack.filled_quantity = request.quantity
 
         return ack
+
+    @staticmethod
+    def _order_blocked_report(signal: SpreadSignal, message: str) -> ExecutionReport:
+        return ExecutionReport(
+            signal=signal,
+            attempted_orders=0,
+            success_orders=0,
+            failed_orders=0,
+            message=message,
+            order_ids=[],
+        )

@@ -93,3 +93,24 @@ def test_apply_credentials_success_updates_runtime_config(tmp_path: Path) -> Non
     assert app.state.orchestrator.config.grvt.credentials.private_key == "grvt-private-key"
     assert app.state.orchestrator.config.grvt.credentials.trading_account_id == "acc-1"
 
+
+def test_apply_credentials_requires_required_fields_when_live_order_enabled(tmp_path: Path) -> None:
+    app = create_app(_build_test_config(tmp_path))
+    app.state.orchestrator.config.runtime.live_order_enabled = True
+
+    payload = {
+        "paradex": {
+            "api_key": "only-paradex-key",
+        }
+    }
+
+    with TestClient(app) as client:
+        save_response = client.post("/api/credentials", json=payload)
+        assert save_response.status_code == 200
+
+        apply_response = client.post("/api/credentials/apply")
+        assert apply_response.status_code == 200
+        body = apply_response.json()
+
+    assert body["ok"] is False
+    assert "缺少必填字段" in body["message"]

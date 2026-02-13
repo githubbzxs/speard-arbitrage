@@ -491,6 +491,9 @@ export function normalizePublicConfig(data: unknown): PublicConfig {
   const fallback: PublicConfig = {
     runtime: {
       dryRun: true,
+      simulatedMarketData: true,
+      liveOrderEnabled: false,
+      enableOrderConfirmationText: "ENABLE_LIVE_ORDER",
       defaultMode: "normal_arb"
     }
   };
@@ -506,11 +509,26 @@ export function normalizePublicConfig(data: unknown): PublicConfig {
   }
 
   const dryRunRaw = runtimeRecord.dry_run ?? runtimeRecord.dryRun;
+  const simulatedMarketDataRaw =
+    runtimeRecord.simulated_market_data ?? runtimeRecord.simulatedMarketData ?? dryRunRaw;
+  const liveOrderEnabledRaw = runtimeRecord.live_order_enabled ?? runtimeRecord.liveOrderEnabled;
+  const confirmationTextRaw =
+    runtimeRecord.enable_order_confirmation_text ?? runtimeRecord.enableOrderConfirmationText;
   const defaultModeRaw = runtimeRecord.default_mode ?? runtimeRecord.defaultMode;
 
   return {
     runtime: {
       dryRun: typeof dryRunRaw === "boolean" ? dryRunRaw : fallback.runtime.dryRun,
+      simulatedMarketData:
+        typeof simulatedMarketDataRaw === "boolean"
+          ? simulatedMarketDataRaw
+          : fallback.runtime.simulatedMarketData,
+      liveOrderEnabled:
+        typeof liveOrderEnabledRaw === "boolean" ? liveOrderEnabledRaw : fallback.runtime.liveOrderEnabled,
+      enableOrderConfirmationText:
+        typeof confirmationTextRaw === "string" && confirmationTextRaw.trim()
+          ? confirmationTextRaw
+          : fallback.runtime.enableOrderConfirmationText,
       defaultMode: defaultModeRaw === "zero_wear" ? "zero_wear" : "normal_arb"
     }
   };
@@ -587,6 +605,27 @@ export const apiClient = {
       method: "POST"
     });
     return normalizeActionResult(response, "凭证已应用");
+  },
+
+  async setOrderExecution(liveOrderEnabled: boolean, confirmText?: string): Promise<ActionResult> {
+    const response = await requestJson<unknown>("/api/runtime/order-execution", {
+      method: "POST",
+      body: JSON.stringify({
+        live_order_enabled: liveOrderEnabled,
+        confirm_text: confirmText ?? ""
+      })
+    });
+    return normalizeActionResult(response, "下单开关已更新");
+  },
+
+  async setMarketDataMode(simulatedMarketData: boolean): Promise<ActionResult> {
+    const response = await requestJson<unknown>("/api/runtime/market-data-mode", {
+      method: "POST",
+      body: JSON.stringify({
+        simulated_market_data: simulatedMarketData
+      })
+    });
+    return normalizeActionResult(response, "行情模式已更新");
   },
 
   async getPublicConfig(): Promise<PublicConfig> {

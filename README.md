@@ -121,6 +121,9 @@ sudo tee /etc/default/arbbot > /dev/null <<'EOF'
 ARB_WEB_HOST=127.0.0.1
 ARB_WEB_PORT=8000
 ARB_WEB_LOG_LEVEL=info
+ARB_SIMULATED_MARKET_DATA=false
+ARB_LIVE_ORDER_ENABLED=false
+ARB_ENABLE_LIVE_ORDER_CONFIRM_TEXT=ENABLE_LIVE_ORDER
 PYTHONUNBUFFERED=1
 EOF
 ```
@@ -224,6 +227,8 @@ EOF
 - `GET /api/status`
 - `GET /api/symbols`
 - `GET /api/events?limit=100`
+- `POST /api/runtime/order-execution` body: `{ "live_order_enabled": boolean, "confirm_text"?: string }`
+- `POST /api/runtime/market-data-mode` body: `{ "simulated_market_data": boolean }`
 - `POST /api/engine/start`
 - `POST /api/engine/stop`
 - `POST /api/mode` body: `{ "mode": "normal_arb" | "zero_wear" }`
@@ -240,6 +245,9 @@ python -m compileall backend
 
 ## 实盘提示
 
-- 首次建议 `ARB_DRY_RUN=true` 做联调。
+- 新版推荐使用双开关：
+  - `ARB_SIMULATED_MARKET_DATA=false` 接入真实行情
+  - `ARB_LIVE_ORDER_ENABLED=false` 先禁用下单，观察稳定后再在网页开启
+- `ARB_DRY_RUN` 仍可兼容旧配置，但建议逐步迁移到双开关。
 - 实盘前请确认交易所 API 权限、杠杆、最小下单量与精度。
 - 风控参数请按交易对波动分层配置，不要直接套默认值。

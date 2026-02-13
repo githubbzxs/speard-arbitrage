@@ -42,6 +42,15 @@ class CredentialsPayload(BaseModel):
     grvt: GrvtCredentialsPayload | None = None
 
 
+class RuntimeOrderExecutionRequest(BaseModel):
+    live_order_enabled: bool = Field(description="是否启用真实下单")
+    confirm_text: str | None = Field(default=None, description="开启真实下单时的确认口令")
+
+
+class RuntimeMarketDataRequest(BaseModel):
+    simulated_market_data: bool = Field(description="是否使用模拟行情")
+
+
 def create_app(config: AppConfig) -> FastAPI:
     """创建 API 应用。"""
     orchestrator = ArbitrageOrchestrator(config)
@@ -86,6 +95,30 @@ def create_app(config: AppConfig) -> FastAPI:
     @app.get("/api/config")
     async def get_config() -> dict[str, Any]:
         return config.to_public_dict()
+
+    @app.post("/api/runtime/order-execution", response_model=ActionResponse)
+    async def set_order_execution(payload: RuntimeOrderExecutionRequest) -> ActionResponse:
+        if payload.live_order_enabled:
+            expected = config.runtime.enable_order_confirmation_text.strip()
+            confirm_text = (payload.confirm_text or "").strip()
+            if confirm_text != expected:
+                raise HTTPException(status_code=400, detail="确认口令错误，已拒绝开启真实下单")
+
+        result = await orchestrator.set_live_order_enabled(payload.live_order_enabled)
+        return ActionResponse(
+            ok=bool(result.get("ok", False)),
+            message=str(result.get("message", "")),
+            data=result.get("data"),
+        )
+
+    @app.post("/api/runtime/market-data-mode", response_model=ActionResponse)
+    async def set_market_data_mode(payload: RuntimeMarketDataRequest) -> ActionResponse:
+        result = await orchestrator.set_simulated_market_data(payload.simulated_market_data)
+        return ActionResponse(
+            ok=bool(result.get("ok", False)),
+            message=str(result.get("message", "")),
+            data=result.get("data"),
+        )
 
     @app.get("/api/credentials/status", response_model=ActionResponse)
     async def get_credentials_status() -> ActionResponse:

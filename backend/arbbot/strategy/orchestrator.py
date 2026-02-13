@@ -40,8 +40,14 @@ class ArbitrageOrchestrator:
     def __init__(self, config: AppConfig) -> None:
         self.config = config
 
-        self.paradex = ParadexAdapter(config.paradex, dry_run=config.runtime.dry_run)
-        self.grvt = GrvtAdapter(config.grvt, dry_run=config.runtime.dry_run)
+        self.paradex = ParadexAdapter(
+            config.paradex,
+            simulate_market_data=config.runtime.simulated_market_data,
+        )
+        self.grvt = GrvtAdapter(
+            config.grvt,
+            simulate_market_data=config.runtime.simulated_market_data,
+        )
         self.adapters = {
             self.paradex.name: self.paradex,
             self.grvt.name: self.grvt,
@@ -72,6 +78,7 @@ class ArbitrageOrchestrator:
             rate_limiter=self.rate_limiter,
             position_manager=self.position_manager,
             strategy_cfg=config.strategy,
+            live_order_enabled=config.runtime.live_order_enabled,
         )
 
         self.repository = Repository(config.storage.sqlite_path)
@@ -98,6 +105,15 @@ class ArbitrageOrchestrator:
             self.engine_status = EngineStatus.STARTING
 
             try:
+                if self.config.runtime.simulated_market_data and self.config.runtime.live_order_enabled:
+                    self.engine_status = EngineStatus.STOPPED
+                    await self._emit_event(
+                        EventLevel.ERROR,
+                        "engine",
+                        "模拟行情模式下禁止启用真实下单，请先切换到真实行情",
+                    )
+                    return False
+
                 symbols = [cfg for cfg in self.config.symbols if cfg.enabled]
                 await asyncio.gather(self.paradex.connect(symbols), self.grvt.connect(symbols))
                 self.ws_supervisor.mark_connected("paradex")
@@ -396,6 +412,10 @@ class ArbitrageOrchestrator:
         return {
             "engine_status": self.engine_status.value,
             "mode": self.mode_controller.mode.value,
+            "runtime": {
+                "simulated_market_data": self.config.runtime.simulated_market_data,
+                "live_order_enabled": self.config.runtime.live_order_enabled,
+            },
             "active_symbols": active_symbols,
             "consistency_ok_count": consistency_ok_count,
             "ws_ok": self.ws_supervisor.is_ok(),
@@ -486,7 +506,7 @@ class ArbitrageOrchestrator:
                 }
 
             missing_fields: list[str] = []
-            if not self.config.runtime.dry_run:
+            if self.config.runtime.live_order_enabled:
                 if not self.config.paradex.credentials.api_key.strip():
                     missing_fields.append("paradex.api_key")
                 if not self.config.paradex.credentials.api_secret.strip():
@@ -529,6 +549,118 @@ class ArbitrageOrchestrator:
         else:
             self.mode_controller.set_mode(StrategyMode.NORMAL_ARB)
         await self._emit_event(EventLevel.INFO, "engine", f"切换模式为 {self.mode_controller.mode.value}")
+
+    async def set_live_order_enabled(self, enabled: bool) -> dict[str, Any]:
+        """切换真实下单开关。"""
+        async with self._status_lock:
+            current = self.config.runtime.live_order_enabled
+            if enabled == current:
+                return {
+                    "ok": True,
+                    "message": "真实下单开关未变化",
+                    "data": {
+                        "live_order_enabled": current,
+                        "engine_status": self.engine_status.value,
+                    },
+                }
+
+            if enabled and self.config.runtime.simulated_market_data:
+                return {
+                    "ok": False,
+                    "message": "当前为模拟行情，禁止开启真实下单",
+                    "data": {
+                        "simulated_market_data": self.config.runtime.simulated_market_data,
+                        "live_order_enabled": current,
+                    },
+                }
+
+            if enabled and self.engine_status != EngineStatus.STOPPED:
+                return {
+                    "ok": False,
+                    "message": "引擎运行中仅允许关闭下单，请先停止引擎再开启真实下单",
+                    "data": {"engine_status": self.engine_status.value},
+                }
+
+            self.config.runtime.live_order_enabled = enabled
+            self.execution_engine.set_live_order_enabled(enabled)
+
+            if enabled:
+                level = EventLevel.WARN
+                message = "已开启真实下单，请确认仓位与风控参数"
+            else:
+                level = EventLevel.INFO
+                message = "已关闭真实下单"
+
+            await self._emit_event(
+                level,
+                "runtime",
+                message,
+                data={
+                    "live_order_enabled": self.config.runtime.live_order_enabled,
+                    "simulated_market_data": self.config.runtime.simulated_market_data,
+                },
+            )
+
+            return {
+                "ok": True,
+                "message": message,
+                "data": {
+                    "live_order_enabled": self.config.runtime.live_order_enabled,
+                    "simulated_market_data": self.config.runtime.simulated_market_data,
+                    "engine_status": self.engine_status.value,
+                },
+            }
+
+    async def set_simulated_market_data(self, enabled: bool) -> dict[str, Any]:
+        """切换模拟行情开关（需引擎停止）。"""
+        async with self._status_lock:
+            if self.engine_status != EngineStatus.STOPPED:
+                return {
+                    "ok": False,
+                    "message": "切换行情模式前请先停止引擎",
+                    "data": {"engine_status": self.engine_status.value},
+                }
+
+            current = self.config.runtime.simulated_market_data
+            forced_order_disabled = False
+
+            self.config.runtime.simulated_market_data = enabled
+            self.paradex.simulate_market_data = enabled
+            self.paradex.dry_run = enabled
+            self.grvt.simulate_market_data = enabled
+            self.grvt.dry_run = enabled
+
+            if enabled and self.config.runtime.live_order_enabled:
+                self.config.runtime.live_order_enabled = False
+                self.execution_engine.set_live_order_enabled(False)
+                forced_order_disabled = True
+
+            mode_label = "模拟行情" if enabled else "真实行情"
+            message = f"已切换为{mode_label}"
+            if forced_order_disabled:
+                message = f"{message}，并自动关闭真实下单"
+
+            await self._emit_event(
+                EventLevel.INFO,
+                "runtime",
+                message,
+                data={
+                    "simulated_market_data": self.config.runtime.simulated_market_data,
+                    "live_order_enabled": self.config.runtime.live_order_enabled,
+                    "previous_simulated_market_data": current,
+                    "forced_order_disabled": forced_order_disabled,
+                },
+            )
+
+            return {
+                "ok": True,
+                "message": message,
+                "data": {
+                    "simulated_market_data": self.config.runtime.simulated_market_data,
+                    "live_order_enabled": self.config.runtime.live_order_enabled,
+                    "forced_order_disabled": forced_order_disabled,
+                },
+            }
 
     async def update_symbol_params(self, symbol: str, params: dict[str, Any]) -> dict[str, Any]:
         allowed_decimal = {

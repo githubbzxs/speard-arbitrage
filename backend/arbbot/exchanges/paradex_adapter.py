@@ -14,8 +14,8 @@ from .base import BaseExchangeAdapter
 class ParadexAdapter(BaseExchangeAdapter):
     """Paradex 适配器，支持 dry-run 与实盘两种模式。"""
 
-    def __init__(self, config: ExchangeConfig, dry_run: bool) -> None:
-        super().__init__(name=ExchangeName.PARADEX, dry_run=dry_run)
+    def __init__(self, config: ExchangeConfig, simulate_market_data: bool) -> None:
+        super().__init__(name=ExchangeName.PARADEX, simulate_market_data=simulate_market_data)
         self.config = config
         self._client = None
         self._symbols: dict[str, SymbolConfig] = {}
@@ -29,7 +29,7 @@ class ParadexAdapter(BaseExchangeAdapter):
             self._sim_mid.setdefault(cfg.symbol, self._infer_anchor_mid(cfg.symbol))
             self._sim_pos.setdefault(cfg.symbol, Decimal("0"))
 
-        if self.dry_run:
+        if self.simulate_market_data:
             return
 
         import ccxt.async_support as ccxt  # type: ignore
@@ -51,7 +51,7 @@ class ParadexAdapter(BaseExchangeAdapter):
             self._client = None
 
     async def health_check(self) -> bool:
-        if self.dry_run:
+        if self.simulate_market_data:
             return True
         if self._client is None:
             return False
@@ -62,7 +62,7 @@ class ParadexAdapter(BaseExchangeAdapter):
             return False
 
     async def fetch_bbo(self, symbol: SymbolConfig) -> BBO | None:
-        if self.dry_run:
+        if self.simulate_market_data:
             bbo = self._simulate_bbo(symbol.symbol, source="ws")
             await self.emit_orderbook(symbol.symbol, bbo)
             return bbo
@@ -87,7 +87,7 @@ class ParadexAdapter(BaseExchangeAdapter):
             return None
 
     async def fetch_rest_bbo(self, symbol: SymbolConfig) -> BBO | None:
-        if self.dry_run:
+        if self.simulate_market_data:
             return self._simulate_bbo(symbol.symbol, source="rest")
 
         if self._client is None:
@@ -108,7 +108,7 @@ class ParadexAdapter(BaseExchangeAdapter):
             return None
 
     async def fetch_position(self, symbol: SymbolConfig) -> Decimal:
-        if self.dry_run:
+        if self.simulate_market_data:
             return self._sim_pos.get(symbol.symbol, Decimal("0"))
 
         if self._client is None:
@@ -130,7 +130,7 @@ class ParadexAdapter(BaseExchangeAdapter):
             return Decimal("0")
 
     async def place_order(self, request: OrderRequest) -> OrderAck:
-        if self.dry_run:
+        if self.simulate_market_data:
             bbo = self._simulate_bbo(request.symbol, source="ws")
             price = request.price if request.price is not None else bbo.mid
             if request.side == TradeSide.BUY:
@@ -207,7 +207,7 @@ class ParadexAdapter(BaseExchangeAdapter):
             )
 
     async def cancel_order(self, symbol: SymbolConfig, order_id: str) -> bool:
-        if self.dry_run:
+        if self.simulate_market_data:
             return True
         if self._client is None:
             return False

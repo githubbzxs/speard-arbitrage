@@ -44,6 +44,9 @@ export interface SymbolRow {
 
 export interface RuntimeConfig {
   dryRun: boolean;
+  simulatedMarketData: boolean;
+  liveOrderEnabled: boolean;
+  enableOrderConfirmationText: string;
   defaultMode: TradingMode;
 }
 

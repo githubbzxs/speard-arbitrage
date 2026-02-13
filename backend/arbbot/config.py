@@ -126,7 +126,9 @@ class WebConfig:
 class RuntimeConfig:
     """运行时配置。"""
 
-    dry_run: bool = True
+    simulated_market_data: bool = True
+    live_order_enabled: bool = False
+    enable_order_confirmation_text: str = "ENABLE_LIVE_ORDER"
     default_mode: StrategyMode = StrategyMode.NORMAL_ARB
 
 
@@ -235,8 +237,20 @@ class AppConfig:
         default_mode = (
             StrategyMode.ZERO_WEAR if mode_raw == StrategyMode.ZERO_WEAR.value else StrategyMode.NORMAL_ARB
         )
+        dry_run_value = _to_bool(os.getenv("ARB_DRY_RUN"), True)
+        simulated_market_data = _to_bool(
+            os.getenv("ARB_SIMULATED_MARKET_DATA"),
+            dry_run_value,
+        )
+        live_order_enabled = _to_bool(
+            os.getenv("ARB_LIVE_ORDER_ENABLED"),
+            not dry_run_value,
+        )
+        confirm_text = os.getenv("ARB_ENABLE_LIVE_ORDER_CONFIRM_TEXT", "ENABLE_LIVE_ORDER").strip()
         runtime = RuntimeConfig(
-            dry_run=_to_bool(os.getenv("ARB_DRY_RUN"), True),
+            simulated_market_data=simulated_market_data,
+            live_order_enabled=live_order_enabled,
+            enable_order_confirmation_text=confirm_text or "ENABLE_LIVE_ORDER",
             default_mode=default_mode,
         )
 
@@ -304,7 +318,11 @@ class AppConfig:
                 "ws_idle_timeout_sec": self.risk.ws_idle_timeout_sec,
             },
             "runtime": {
-                "dry_run": self.runtime.dry_run,
+                # 兼容旧版前端：dry_run 等价于 simulated_market_data。
+                "dry_run": self.runtime.simulated_market_data,
+                "simulated_market_data": self.runtime.simulated_market_data,
+                "live_order_enabled": self.runtime.live_order_enabled,
+                "enable_order_confirmation_text": self.runtime.enable_order_confirmation_text,
                 "default_mode": self.runtime.default_mode.value,
             },
         }
