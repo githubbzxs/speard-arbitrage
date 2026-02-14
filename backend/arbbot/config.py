@@ -405,7 +405,7 @@ class AppConfig:
             enabled=_to_bool(os.getenv("ARB_MARKET_WARMUP_ENABLED"), True),
             require_ready_for_market_api=_to_bool(os.getenv("ARB_MARKET_API_REQUIRE_WARMUP"), True),
             timeout_sec=max(1, _to_int(os.getenv("ARB_MARKET_WARMUP_TIMEOUT_SEC"), 90)),
-            scan_interval_ms=max(50, _to_int(os.getenv("ARB_MARKET_WARMUP_SCAN_INTERVAL_MS"), 300)),
+            scan_interval_ms=max(50, _to_int(os.getenv("ARB_MARKET_WARMUP_SCAN_INTERVAL_MS"), 2000)),
             history_retention=max(200, _to_int(os.getenv("ARB_MARKET_HISTORY_RETENTION"), 2000)),
         )
 

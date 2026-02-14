@@ -7,6 +7,11 @@
 - 数据存储：SQLite + CSV。
 
 ## Decisions
+- [2026-02-14] GRVT 杠杆鉴权增强（账号一致性诊断 + 缓存 + 认证重试）
+  - Why：修复“凭证看似可用但预热持续 503（You need to authenticate）”的高频问题，减少私有接口抖动并提升定位效率。
+  - Impact：`backend/arbbot/market/scanner.py`、`backend/arbbot/security/credentials_validator.py`、`backend/arbbot/config.py`、`.env.example`、`backend/tests/test_grvt_leverage_diagnostics.py`。
+  - Verify：`python -m pytest backend/tests/test_grvt_leverage_diagnostics.py`、`python -m pytest backend/tests`。
+
 - [2026-02-13] 预热门禁错误改为透出真实扫描失败原因（含 GRVT 杠杆错误）
   - Why：修复“始终 503 且只显示正在拉取可比币对”的误导，便于快速定位凭证/子账户问题。
   - Impact：`backend/arbbot/market/scanner.py`、`backend/arbbot/web/api.py`、`backend/tests/test_api_market_warmup.py`、`backend/tests/test_market_scanner_warmup_error.py`。

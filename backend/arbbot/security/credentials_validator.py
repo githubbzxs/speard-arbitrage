@@ -126,6 +126,8 @@ class CredentialsValidator:
             "required_fields": False,
             "load_markets": False,
             "fetch_positions": False,
+            "api_key_login": False,
+            "api_key_account_match": False,
             "fetch_max_leverage": False,
         }
 
@@ -189,13 +191,55 @@ class CredentialsValidator:
         )
 
         try:
+            def mask_tail(value: str) -> str:
+                normalized = str(value or "").strip()
+                if not normalized:
+                    return ""
+                if len(normalized) <= 4:
+                    return normalized
+                return normalized[-4:]
+
+            def build_diag(cookie_account_id: str) -> str:
+                cookie_tail = mask_tail(cookie_account_id)
+                cookie_display = f"...{cookie_tail}" if cookie_tail else "未获取"
+                env_name = str(self._config.grvt.environment or "").strip().lower() or "prod"
+                return (
+                    f"（env={env_name}, X-Grvt-Account-Id={cookie_display}, "
+                    f"trading_account_id=...{mask_tail(trading_account_id)}）"
+                )
+
+            # 先尝试登录，拿到 cookie 与 X-Grvt-Account-Id，便于提示子账户是否一致。
+            try:
+                await raw_client._refresh_cookie()  # type: ignore[attr-defined]
+            except Exception:
+                pass
+
+            cookie = getattr(raw_client, "_cookie", None)
+            checks["api_key_login"] = cookie is not None
+            cookie_account_id = (
+                str(getattr(cookie, "grvt_account_id", "") or "").strip()
+                if cookie is not None
+                else ""
+            )
+            if cookie_account_id:
+                checks["api_key_account_match"] = cookie_account_id == trading_account_id
+                if not checks["api_key_account_match"]:
+                    return {
+                        "valid": False,
+                        "reason": (
+                            "GRVT API Key 归属子账户与 trading_account_id 不一致"
+                            f"{build_diag(cookie_account_id)}"
+                        ),
+                        "checks": checks,
+                    }
+
             response = await raw_client.get_all_initial_leverage_v1(
                 ApiGetAllInitialLeverageRequest(sub_account_id=trading_account_id)
             )
             if isinstance(response, GrvtError):
                 return {
                     "valid": False,
-                    "reason": f"GRVT 杠杆接口失败: {response.code} {response.message}",
+                    "reason": f"GRVT 杠杆接口失败: {response.code} {response.message} {build_diag(cookie_account_id)}",
                     "checks": checks,
                 }
 

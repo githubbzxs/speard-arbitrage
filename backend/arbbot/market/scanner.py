@@ -29,6 +29,7 @@ MAX_TOP_LIMIT = 2000
 DEFAULT_SPEED_WINDOW_SEC = 600
 DEFAULT_WARMUP_POLL_SEC = 0.3
 DEFAULT_MIN_EFFECTIVE_LEVERAGE = 50.0
+DEFAULT_GRVT_LEVERAGE_CACHE_TTL_SEC = 300.0
 
 ZSCORE_STATUS_READY = "ready"
 ZSCORE_STATUS_INSUFFICIENT_SAMPLES = "insufficient_samples"
@@ -208,6 +209,11 @@ class NominalSpreadScanner:
         self._warmup_symbol_ready = 0
         self._warmup_symbol_samples: dict[str, int] = {}
         self._warmup_symbols: list[str] = []
+        # 缓存 GRVT 杠杆映射，减少预热阶段频繁打私有接口导致的鉴权抖动/限流。
+        self._grvt_leverage_cache: dict[str, float] | None = None
+        self._grvt_leverage_cache_identity: tuple[str, str] | None = None
+        self._grvt_leverage_cache_at = 0.0
+        self._grvt_leverage_cache_ttl_sec = DEFAULT_GRVT_LEVERAGE_CACHE_TTL_SEC
         self._ensure_market_history_schema()
 
     def _resolve_effective_leverage(self, paradex_max_leverage: Any, grvt_max_leverage: Any) -> float | None:
@@ -632,9 +638,6 @@ class NominalSpreadScanner:
                 raw_message = "GRVT private_key 格式错误：必须是十六进制字符串（可带 0x 前缀）"
             self._last_error = f"扫描失败: {raw_message or '未知异常'}"
             self._warmup_done = False
-            self._warmup_symbol_total = 0
-            self._warmup_symbol_ready = 0
-            self._warmup_symbol_samples = {}
             self._warmup_last_message = self._last_error
             self._updated_at = utc_iso()
             self._last_refresh_monotonic = time.monotonic()
@@ -1081,50 +1084,133 @@ class NominalSpreadScanner:
 
     async def _fetch_grvt_leverage_map(self) -> dict[str, float]:
         credentials = self._config.grvt.credentials
-        if not credentials.trading_account_id.strip() or not credentials.private_key.strip() or not credentials.api_key.strip():
+        env_name = str(self._config.grvt.environment or "").strip().lower() or "prod"
+        trading_account_id = str(credentials.trading_account_id or "").strip()
+        private_key = str(credentials.private_key or "").strip()
+        api_key = str(credentials.api_key or "").strip()
+
+        if not trading_account_id or not private_key or not api_key:
             raise ValueError("GRVT 凭证不足，无法获取真实杠杆（需要 api_key/private_key/trading_account_id）")
-        if not _is_valid_hex_key(credentials.private_key):
+        if not _is_valid_hex_key(private_key):
             raise ValueError("GRVT private_key 格式错误：必须是十六进制字符串（可带 0x 前缀）")
+
+        identity = (env_name, trading_account_id)
+        if self._grvt_leverage_cache_identity != identity:
+            self._grvt_leverage_cache = None
+            self._grvt_leverage_cache_at = 0.0
+            self._grvt_leverage_cache_identity = identity
+
+        if self._grvt_leverage_cache is not None:
+            cache_age = time.monotonic() - float(self._grvt_leverage_cache_at or 0.0)
+            if cache_age >= 0 and cache_age < float(self._grvt_leverage_cache_ttl_sec or 0.0):
+                return dict(self._grvt_leverage_cache)
+
+        def mask_tail(value: str) -> str:
+            normalized = str(value or "").strip()
+            if not normalized:
+                return ""
+            if len(normalized) <= 4:
+                return normalized
+            return normalized[-4:]
+
+        def build_diag(cookie_account_id: str) -> str:
+            cookie_tail = mask_tail(cookie_account_id)
+            cookie_display = f"...{cookie_tail}" if cookie_tail else "未获取"
+            return (
+                f"（env={env_name}, X-Grvt-Account-Id={cookie_display}, "
+                f"trading_account_id=...{mask_tail(trading_account_id)}）"
+            )
 
         raw_client = GrvtRawAsync(
             GrvtApiConfig(
                 env=self._resolve_grvt_raw_env(),
-                trading_account_id=credentials.trading_account_id,
-                private_key=credentials.private_key,
-                api_key=credentials.api_key,
+                trading_account_id=trading_account_id,
+                private_key=private_key,
+                api_key=api_key,
                 logger=None,
             )
         )
+
+        async def reset_auth_state() -> None:
+            # 强制下一次请求重新登录获取 cookie。
+            try:
+                setattr(raw_client, "_cookie", None)
+            except Exception:
+                pass
+
+            session = getattr(raw_client, "_session", None)
+            if session is None:
+                return
+
+            try:
+                session.headers.pop("X-Grvt-Account-Id", None)
+            except Exception:
+                pass
+
+            jar = getattr(session, "cookie_jar", None)
+            if jar is not None:
+                try:
+                    jar.clear()
+                except Exception:
+                    pass
 
         try:
             last_error: Exception | None = None
             for attempt in range(3):
                 try:
+                    # 先尝试登录，拿到 cookie 及 X-Grvt-Account-Id 以便做子账户一致性诊断。
+                    try:
+                        await raw_client._refresh_cookie()  # type: ignore[attr-defined]
+                    except Exception:
+                        pass
+
+                    cookie = getattr(raw_client, "_cookie", None)
+                    cookie_account_id = (
+                        str(getattr(cookie, "grvt_account_id", "") or "").strip()
+                        if cookie is not None
+                        else ""
+                    )
+
+                    if cookie_account_id and cookie_account_id != trading_account_id:
+                        raise ValueError(
+                            "GRVT 杠杆接口鉴权失败：API Key 归属子账户与 trading_account_id 不一致"
+                            f"{build_diag(cookie_account_id)}"
+                        )
+
                     response = await raw_client.get_all_initial_leverage_v1(
-                        ApiGetAllInitialLeverageRequest(sub_account_id=credentials.trading_account_id)
+                        ApiGetAllInitialLeverageRequest(sub_account_id=trading_account_id)
                     )
                     if isinstance(response, GrvtError):
-                        raise ValueError(
-                            "GRVT 杠杆接口错误: "
-                            f"{response.code} {response.message} "
-                            "（请确认 trading_account_id 与 API Key 属于同一子账户）"
-                        )
+                        message = str(response.message or "")
+                        base = f"GRVT 杠杆接口错误: {response.code} {message} {build_diag(cookie_account_id)}"
+                        is_auth_error = response.code == 1000 or "authenticate" in message.lower()
+                        if is_auth_error:
+                            await reset_auth_state()
+                            raise RuntimeError(base + "（需要先完成 API Key 鉴权，请确认 API Key 权限与子账户配置）")
+                        raise ValueError(base + "（请确认 trading_account_id 与 API Key 属于同一子账户）")
 
                     leverage_map: dict[str, float] = {}
                     for item in response.results:
-                        parsed = _to_decimal(item.max_leverage)
+                        parsed = _to_decimal(getattr(item, "max_leverage", None))
                         if parsed is None or parsed <= 0:
                             continue
-                        leverage_map[item.instrument] = _sanitize_leverage(parsed)
+                        instrument = str(getattr(item, "instrument", "") or "").strip()
+                        if not instrument:
+                            continue
+                        leverage_map[instrument] = _sanitize_leverage(parsed)
 
                     if not leverage_map:
                         raise ValueError("GRVT 杠杆接口返回为空")
 
+                    self._grvt_leverage_cache = dict(leverage_map)
+                    self._grvt_leverage_cache_at = time.monotonic()
                     return leverage_map
                 except Exception as exc:  # pragma: no cover - 网络抖动重试分支
                     last_error = exc
+                    if isinstance(exc, ValueError) and "归属子账户" in str(exc) and "不一致" in str(exc):
+                        raise
                     if attempt < 2:
-                        await asyncio.sleep(0.35 * (attempt + 1))
+                        await asyncio.sleep(0.6 * (2**attempt))
                         continue
                     break
 
