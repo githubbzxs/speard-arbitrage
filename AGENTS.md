@@ -7,6 +7,11 @@
 - 数据存储：SQLite + CSV。
 
 ## Decisions
+- [2026-02-13] 预热门禁错误改为透出真实扫描失败原因（含 GRVT 杠杆错误）
+  - Why：修复“始终 503 且只显示正在拉取可比币对”的误导，便于快速定位凭证/子账户问题。
+  - Impact：`backend/arbbot/market/scanner.py`、`backend/arbbot/web/api.py`、`backend/tests/test_api_market_warmup.py`、`backend/tests/test_market_scanner_warmup_error.py`。
+  - Verify：`python -m pytest backend/tests/test_api_market_warmup.py backend/tests/test_market_scanner_warmup_error.py`、`python -m pytest backend/tests`。
+
 - [2026-02-13] 下单候选默认自动应用首个可执行标的
   - Why：用户要求“默认这些可执行”，避免每次刷新后还需手动点“应用交易标的”。
   - Impact：`backend/arbbot/web/api.py`、`backend/tests/test_api_trade_selection.py`。

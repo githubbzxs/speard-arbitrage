@@ -157,3 +157,44 @@ def test_market_api_works_after_warmup_ready(tmp_path: Path) -> None:
     payload = response.json()
     assert payload["warmup_done"] is True
     assert payload["rows"][0]["symbol"] == "BTC-PERP"
+
+
+def test_market_api_returns_scan_error_when_warmup_stuck(tmp_path: Path) -> None:
+    app = create_app(_build_test_config(tmp_path))
+
+    async def fake_warmup_until_ready(*, timeout_sec: float, poll_sec: float) -> dict[str, object]:
+        return {
+            "done": False,
+            "message": "尚未开始",
+            "required_samples": 60,
+            "symbols_total": 0,
+            "symbols_ready": 0,
+            "symbols_pending": 0,
+            "sample_counts": {},
+            "updated_at": "2026-02-13T00:00:00+00:00",
+        }
+
+    app.state.market_scanner.warmup_until_ready = fake_warmup_until_ready
+    app.state.market_scanner.is_warmup_ready = lambda: False
+    app.state.market_scanner.get_warmup_status = lambda: {
+        "done": False,
+        "message": "尚未开始",
+        "required_samples": 60,
+        "symbols_total": 0,
+        "symbols_ready": 0,
+        "symbols_pending": 0,
+        "sample_counts": {},
+        "updated_at": "2026-02-13T00:00:00+00:00",
+    }
+    app.state.market_scanner.get_last_error = lambda: "扫描失败: GRVT 杠杆接口错误: 401 unauthorized"
+
+    with TestClient(app) as client:
+        response = client.get("/api/market/top-spreads")
+        warmup_response = client.get("/api/market/warmup-status")
+
+    assert response.status_code == 503
+    assert "GRVT" in response.text
+    assert warmup_response.status_code == 200
+    payload = warmup_response.json()
+    assert payload["last_error"] is not None
+    assert "GRVT" in payload["last_error"]

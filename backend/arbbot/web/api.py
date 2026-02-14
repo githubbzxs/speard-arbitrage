@@ -88,10 +88,16 @@ def create_app(config: AppConfig) -> FastAPI:
 
     def market_warmup_message() -> str:
         status = market_scanner.get_warmup_status()
+        last_error = market_scanner.get_last_error().strip()
+        if last_error:
+            return f"市场数据预热失败：{last_error}"
         symbols_total = int(status.get("symbols_total", 0))
         symbols_ready = int(status.get("symbols_ready", 0))
         required_samples = int(status.get("required_samples", config.strategy.min_samples))
         if symbols_total <= 0:
+            status_message = str(status.get("message", "")).strip()
+            if status_message:
+                return status_message
             return "市场数据预热中：正在拉取可比币对"
         return f"市场数据预热中：{symbols_ready}/{symbols_total} 个币对达到 {required_samples} 样本"
 
@@ -396,6 +402,7 @@ def create_app(config: AppConfig) -> FastAPI:
             "warmup_done": status.get("done", False),
             "warmup_progress": status,
             "message": status.get("message", ""),
+            "last_error": market_scanner.get_last_error() or None,
         }
 
     @app.get("/api/trade/selection")

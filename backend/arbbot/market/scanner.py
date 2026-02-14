@@ -497,9 +497,12 @@ class NominalSpreadScanner:
 
     def get_warmup_status(self) -> dict[str, Any]:
         remaining = max(0, self._warmup_symbol_total - self._warmup_symbol_ready)
+        message = self._warmup_last_message
+        if not self._warmup_done and self._last_error:
+            message = self._last_error
         return {
             "done": self._warmup_done,
-            "message": self._warmup_last_message,
+            "message": message,
             "required_samples": self._warmup_required_samples,
             "symbols_total": self._warmup_symbol_total,
             "symbols_ready": self._warmup_symbol_ready,
@@ -510,6 +513,9 @@ class NominalSpreadScanner:
 
     def is_warmup_ready(self) -> bool:
         return bool(self._warmup_done)
+
+    def get_last_error(self) -> str:
+        return str(self._last_error or "")
 
     def build_warmup_payload(self, *, limit: int) -> dict[str, Any]:
         status = self.get_warmup_status()
@@ -525,7 +531,7 @@ class NominalSpreadScanner:
             "skipped_count": sum(self._skipped_reasons.values()),
             "skipped_reasons": self._skipped_reasons,
             "fee_profile": {"paradex_leg": "taker", "grvt_leg": "maker"},
-            "last_error": status["message"],
+            "last_error": self._last_error or status["message"],
             "warmup_done": False,
             "warmup_progress": status,
             "rows": [],
@@ -625,6 +631,11 @@ class NominalSpreadScanner:
             if "non-hexadecimal digit found" in raw_message.lower():
                 raw_message = "GRVT private_key 格式错误：必须是十六进制字符串（可带 0x 前缀）"
             self._last_error = f"扫描失败: {raw_message or '未知异常'}"
+            self._warmup_done = False
+            self._warmup_symbol_total = 0
+            self._warmup_symbol_ready = 0
+            self._warmup_symbol_samples = {}
+            self._warmup_last_message = self._last_error
             self._updated_at = utc_iso()
             self._last_refresh_monotonic = time.monotonic()
             if not self._rows:
@@ -1086,23 +1097,38 @@ class NominalSpreadScanner:
         )
 
         try:
-            response = await raw_client.get_all_initial_leverage_v1(
-                ApiGetAllInitialLeverageRequest(sub_account_id=credentials.trading_account_id)
-            )
-            if isinstance(response, GrvtError):
-                raise ValueError(f"GRVT 杠杆接口错误: {response.code} {response.message}")
+            last_error: Exception | None = None
+            for attempt in range(3):
+                try:
+                    response = await raw_client.get_all_initial_leverage_v1(
+                        ApiGetAllInitialLeverageRequest(sub_account_id=credentials.trading_account_id)
+                    )
+                    if isinstance(response, GrvtError):
+                        raise ValueError(
+                            "GRVT 杠杆接口错误: "
+                            f"{response.code} {response.message} "
+                            "（请确认 trading_account_id 与 API Key 属于同一子账户）"
+                        )
 
-            leverage_map: dict[str, float] = {}
-            for item in response.results:
-                parsed = _to_decimal(item.max_leverage)
-                if parsed is None or parsed <= 0:
-                    continue
-                leverage_map[item.instrument] = _sanitize_leverage(parsed)
+                    leverage_map: dict[str, float] = {}
+                    for item in response.results:
+                        parsed = _to_decimal(item.max_leverage)
+                        if parsed is None or parsed <= 0:
+                            continue
+                        leverage_map[item.instrument] = _sanitize_leverage(parsed)
 
-            if not leverage_map:
-                raise ValueError("GRVT 杠杆接口返回为空")
+                    if not leverage_map:
+                        raise ValueError("GRVT 杠杆接口返回为空")
 
-            return leverage_map
+                    return leverage_map
+                except Exception as exc:  # pragma: no cover - 网络抖动重试分支
+                    last_error = exc
+                    if attempt < 2:
+                        await asyncio.sleep(0.35 * (attempt + 1))
+                        continue
+                    break
+
+            raise ValueError(str(last_error or "GRVT 杠杆接口异常"))
         finally:
             session = getattr(raw_client, "_session", None)
             if session is not None and not session.closed:
